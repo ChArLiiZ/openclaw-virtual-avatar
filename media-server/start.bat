@@ -3,69 +3,94 @@ setlocal EnableExtensions EnableDelayedExpansion
 title Virtual Avatar Media Server
 cd /d "%~dp0"
 
-echo [Virtual Avatar] Checking environment...
+echo [Virtual Avatar] Checking conda-based environment...
 
-:: ====== Find Python 3.10+ (prefer newer) ======
-set PYTHON_CMD=
+set "ENV_NAME=openclaw-virtual-avatar"
+set "ENV_FILE=%CD%\environment.yml"
+set "CONDA_EXE="
+set "CONDA_ROOT="
 
-where py >nul 2>&1
+:: ====== Ensure Conda / Miniforge ======
+where conda >nul 2>&1
 if not errorlevel 1 (
-    for %%v in (3.13 3.12 3.11 3.10) do (
-        if not defined PYTHON_CMD (
-            py -%%v --version >nul 2>&1
-            if not errorlevel 1 set PYTHON_CMD=py -%%v
-        )
+    for /f "delims=" %%C in ('where conda') do (
+        set "CONDA_EXE=%%C"
+        goto :conda_found
     )
 )
 
-if not defined PYTHON_CMD (
-    where python >nul 2>&1
-    if not errorlevel 1 (
-        python -c "import sys; exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
-        if not errorlevel 1 set PYTHON_CMD=python
-    )
-)
-
-if not defined PYTHON_CMD (
-    echo [ERROR] Python 3.10+ not found. Download here:
-    echo https://www.python.org/downloads/
+echo [Setup] Conda not found. Installing Miniforge3...
+winget install -e --id CondaForge.Miniforge3 --silent --accept-package-agreements --accept-source-agreements
+if errorlevel 1 (
+    echo [ERROR] Failed to install Miniforge3 automatically.
     pause
     exit /b 1
 )
 
-echo [Virtual Avatar] Using Python command: %PYTHON_CMD%
+echo [Setup] Refreshing PATH after Miniforge install...
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%P"
 
-:: ====== Python venv setup ======
-if not exist "python\venv" (
-    echo [Setup] Creating virtual environment...
-    %PYTHON_CMD% -m venv python\venv
+where conda >nul 2>&1
+if not errorlevel 1 (
+    for /f "delims=" %%C in ('where conda') do (
+        set "CONDA_EXE=%%C"
+        goto :conda_found
+    )
+)
+
+for %%D in ("%UserProfile%\miniforge3" "%LocalAppData%\miniforge3" "%ProgramData%\miniforge3" "%UserProfile%\Miniforge3" "%LocalAppData%\Miniforge3" "%ProgramData%\Miniforge3") do (
+    if exist "%%~fD\Scripts\conda.exe" (
+        set "CONDA_EXE=%%~fD\Scripts\conda.exe"
+        goto :conda_found
+    )
+)
+
+echo [ERROR] Conda was installed but could not be found.
+echo [ERROR] Please reopen start.bat once, or check Miniforge installation.
+pause
+exit /b 1
+
+:conda_found
+for %%D in ("%CONDA_EXE%") do set "CONDA_ROOT=%%~dpD.."
+set "CONDA_ROOT=%CONDA_ROOT:\\=\%"
+
+echo [Virtual Avatar] Using conda: %CONDA_EXE%
+
+:: ====== Optional Windows dependencies ======
+echo [Setup] Ensuring Microsoft VC++ Runtime...
+winget install -e --id Microsoft.VCRedist.2015+.x64 --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
+
+where espeak-ng >nul 2>&1
+if errorlevel 1 (
+    echo [Setup] espeak-ng not found, attempting install...
+    winget install -e --id eSpeak-NG.eSpeak-NG --silent --accept-package-agreements --accept-source-agreements
     if errorlevel 1 (
-        echo [ERROR] Failed to create venv.
-        pause
-        exit /b 1
+        echo [WARN] Automatic espeak-ng install failed. Continuing for now.
     )
 )
 
-set VENV_PY=python\venv\Scripts\python.exe
-if not exist "%VENV_PY%" (
-    echo [ERROR] venv python not found: %VENV_PY%
+:: ====== Create / update Conda env ======
+if not exist "%ENV_FILE%" (
+    echo [ERROR] environment.yml not found: %ENV_FILE%
     pause
     exit /b 1
 )
 
-:: ====== Install/Fix Dependencies ======
-echo [Setup] Upgrading pip tooling...
-%VENV_PY% -m pip install -q --upgrade pip setuptools wheel
-if errorlevel 1 goto :pip_fail
+echo [Setup] Ensuring conda environment "%ENV_NAME%"...
+call "%CONDA_EXE%" env list | findstr /R /C:"^%ENV_NAME% " >nul 2>&1
+if errorlevel 1 (
+    echo [Setup] Creating conda environment from environment.yml...
+    call "%CONDA_EXE%" env create -f "%ENV_FILE%"
+    if errorlevel 1 goto :conda_fail
+) else (
+    echo [Setup] Updating conda environment from environment.yml...
+    call "%CONDA_EXE%" env update -n "%ENV_NAME%" -f "%ENV_FILE%" --prune
+    if errorlevel 1 goto :conda_fail
+)
 
-echo [Setup] Installing Python dependencies...
-%VENV_PY% -m pip install -q -r python\requirements.txt
-if errorlevel 1 goto :pip_fail
-
-:: ====== GPU PyTorch bootstrap ======
-echo [Setup] Reinstalling GPU PyTorch...
-%VENV_PY% -m pip uninstall -y torch torchaudio torchvision torchcodec >nul 2>&1
-
+:: ====== GPU stack inside Conda env ======
+echo [Setup] Installing GPU PyTorch inside conda env...
+call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip uninstall -y torch torchaudio torchvision torchcodec >nul 2>&1
 set TORCH_OK=
 for %%I in (
     https://download.pytorch.org/whl/cu128
@@ -75,15 +100,15 @@ for %%I in (
 ) do (
     if not defined TORCH_OK (
         echo [Setup] Trying PyTorch index: %%I
-        %VENV_PY% -m pip install -q --no-cache-dir --force-reinstall torch torchaudio torchvision --index-url %%I
+        call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip install -q --no-cache-dir --force-reinstall torch torchaudio torchvision --index-url %%I
         if not errorlevel 1 (
-            %VENV_PY% -c "import sys, torch; print('[Torch]', torch.__version__); print('[CUDA]', torch.version.cuda); ok=torch.cuda.is_available() and '+cpu' not in torch.__version__; sys.exit(0 if ok else 1)"
+            call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import sys, torch; print('[Torch]', torch.__version__); print('[CUDA]', torch.version.cuda); ok=torch.cuda.is_available() and '+cpu' not in torch.__version__; sys.exit(0 if ok else 1)"
             if not errorlevel 1 (
                 set TORCH_OK=1
                 set TORCH_INDEX=%%I
             ) else (
                 echo [Setup] Installed torch is not a usable GPU build, retrying...
-                %VENV_PY% -m pip uninstall -y torch torchaudio torchvision torchcodec >nul 2>&1
+                call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip uninstall -y torch torchaudio torchvision torchcodec >nul 2>&1
             )
         )
     )
@@ -91,73 +116,23 @@ for %%I in (
 
 if not defined TORCH_OK (
     echo [ERROR] Failed to install a usable GPU PyTorch build automatically.
-    echo [ERROR] start.bat will stop here instead of launching a broken server.
-    echo [HINT] Check NVIDIA driver / CUDA support on this machine.
     pause
     exit /b 1
 )
 
 echo [Setup] Selected PyTorch index: %TORCH_INDEX%
 
-:: ====== Optional Windows dependencies ======
-echo [Setup] Ensuring Microsoft VC++ Runtime...
-winget install -e --id Microsoft.VCRedist.2015+.x64 --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
-
-echo [Setup] Refreshing PATH from machine/user environment...
-for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%P"
-
-where ffmpeg >nul 2>&1
+echo [Setup] Installing TorchCodec in conda env...
+call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip install -q --no-cache-dir --force-reinstall torchcodec
 if errorlevel 1 (
-    echo [Setup] FFmpeg not found, installing shared build...
-    winget install -e --id Gyan.FFmpeg.Shared --silent --accept-package-agreements --accept-source-agreements
-    echo [Setup] Refreshing PATH after FFmpeg install...
-    for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%P"
-)
-
-for /f "delims=" %%F in ('where ffmpeg 2^>nul') do (
-    set "FFMPEG_EXE=%%F"
-    goto :ffmpeg_found
-)
-
-:ffmpeg_missing
-echo [ERROR] FFmpeg is still not visible in PATH after installation.
-echo [ERROR] Please re-run start.bat once so the updated PATH can take effect.
-pause
-exit /b 1
-
-:ffmpeg_found
-for %%D in ("%FFMPEG_EXE%") do set "FFMPEG_BIN=%%~dpD"
-if defined FFMPEG_BIN (
-    echo [Setup] Prepending FFmpeg bin to PATH: %FFMPEG_BIN%
-    set "PATH=%FFMPEG_BIN%;%PATH%"
-)
-
-where espeak-ng >nul 2>&1
-if errorlevel 1 (
-    echo [Setup] espeak-ng not found, attempting install...
-    winget install -e --id eSpeak-NG.eSpeak-NG --silent --accept-package-agreements --accept-source-agreements
-    if errorlevel 1 (
-        echo [WARN] Automatic espeak-ng install failed. Continuing for now.
-    )
-    echo [Setup] Refreshing PATH after espeak-ng install...
-    for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%P"
-)
-
-echo [Setup] Verifying ffmpeg visibility...
-where ffmpeg
-if errorlevel 1 goto :ffmpeg_missing
-
-echo [Setup] Installing TorchCodec...
-%VENV_PY% -m pip install -q --no-cache-dir --force-reinstall torchcodec
-if errorlevel 1 (
-    echo [ERROR] Failed to install torchcodec.
+    echo [ERROR] Failed to install torchcodec in conda env.
     pause
     exit /b 1
 )
 
-%VENV_PY% -c "import torch, torchcodec; print('[TorchCodec] OK'); print('[Torch]', torch.__version__); print('[CUDA available]', torch.cuda.is_available())"
+call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import torch, torchcodec; print('[TorchCodec] OK'); print('[Torch]', torch.__version__); print('[CUDA available]', torch.cuda.is_available())"
 if errorlevel 1 (
-    echo [ERROR] TorchCodec verification failed. This usually means FFmpeg shared DLLs are still unavailable to Python.
+    echo [ERROR] TorchCodec verification failed inside conda env.
     pause
     exit /b 1
 )
@@ -177,7 +152,7 @@ if not exist "node_modules" (
 echo [OK] Starting services...
 echo [Note] First run may download F5-TTS / Whisper models, so Python 視窗短時間沒反應是正常的。
 
-start "Virtual Avatar - Python (8081)" %VENV_PY% -u python\server.py
+start "Virtual Avatar - Python (8081)" cmd /k "call "%CONDA_EXE%" run -n "%ENV_NAME%" python -u python\server.py"
 timeout /t 3 /nobreak > nul
 start "Virtual Avatar - Node (8080)" node src/index.js
 
@@ -185,11 +160,13 @@ echo.
 echo  Virtual Avatar is running!
 echo   Node   ^> http://localhost:8080
 echo   Python ^> http://localhost:8081
+
+echo  Conda env ^> %ENV_NAME%
 echo.
 echo  Close both windows to stop the services.
 exit /b 0
 
-:pip_fail
-echo [ERROR] pip install failed.
+:conda_fail
+echo [ERROR] Conda environment setup failed.
 pause
 exit /b 1
