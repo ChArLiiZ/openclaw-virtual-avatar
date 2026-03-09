@@ -100,12 +100,36 @@ if not defined TORCH_OK (
 echo [Setup] Selected PyTorch index: %TORCH_INDEX%
 
 :: ====== Optional Windows dependencies ======
+echo [Setup] Ensuring Microsoft VC++ Runtime...
+winget install -e --id Microsoft.VCRedist.2015+.x64 --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
+
+echo [Setup] Refreshing PATH from machine/user environment...
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%P"
+
 where ffmpeg >nul 2>&1
 if errorlevel 1 (
     echo [Setup] FFmpeg not found, installing shared build...
     winget install -e --id Gyan.FFmpeg.Shared --silent --accept-package-agreements --accept-source-agreements
     echo [Setup] Refreshing PATH after FFmpeg install...
     for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%P"
+)
+
+for /f "delims=" %%F in ('where ffmpeg 2^>nul') do (
+    set "FFMPEG_EXE=%%F"
+    goto :ffmpeg_found
+)
+
+:ffmpeg_missing
+echo [ERROR] FFmpeg is still not visible in PATH after installation.
+echo [ERROR] Please re-run start.bat once so the updated PATH can take effect.
+pause
+exit /b 1
+
+:ffmpeg_found
+for %%D in ("%FFMPEG_EXE%") do set "FFMPEG_BIN=%%~dpD"
+if defined FFMPEG_BIN (
+    echo [Setup] Prepending FFmpeg bin to PATH: %FFMPEG_BIN%
+    set "PATH=%FFMPEG_BIN%;%PATH%"
 )
 
 where espeak-ng >nul 2>&1
@@ -121,12 +145,7 @@ if errorlevel 1 (
 
 echo [Setup] Verifying ffmpeg visibility...
 where ffmpeg
-if errorlevel 1 (
-    echo [ERROR] FFmpeg is still not visible in PATH after installation.
-    echo [ERROR] Please re-run start.bat once so the updated PATH can take effect.
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto :ffmpeg_missing
 
 echo [Setup] Installing TorchCodec...
 %VENV_PY% -m pip install -q --no-cache-dir --force-reinstall torchcodec
