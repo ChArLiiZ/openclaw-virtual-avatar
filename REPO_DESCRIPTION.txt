@@ -1,0 +1,1 @@
+OpenClaw Plugin + Local Media Server for virtual avatar with TTS, STT, and Live2D/VRM support

@@ -33,10 +33,24 @@ const upload = multer({
 
 // Config
 const CONFIG = {
-  kokoroPath: process.env.KOKORO_PATH || './kokoro',
-  whisperModelPath: process.env.WHISPER_MODEL_PATH || './models/ggml-base.bin',
+  pythonServiceUrl: process.env.PYTHON_SERVICE_URL || 'http://localhost:8081',
   live2dModelPath: process.env.LIVE2D_MODEL_PATH || './models',
 };
+
+// Proxy helper to Python service
+async function proxyToPython(endpoint, body) {
+  const url = `${CONFIG.pythonServiceUrl}${endpoint}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Python service error: ${res.status} ${err}`);
+  }
+  return res;
+}
 
 // ==================== TTS Endpoints ====================
 
@@ -58,22 +72,17 @@ app.post('/v1/audio/speech', async (req, res) => {
     console.log(`[TTS] Generating speech for: ${input.substring(0, 50)}...`);
     console.log(`[TTS] Voice: ${voice || 'default'}, Speed: ${speed || 1.0}`);
 
-    // TODO: Integrate Kokoro TTS
-    // For now, return a placeholder response
-    // In production, you would:
-    // 1. Call Kokoro CLI: ./kokoro -t "Hello" -v af_sarah -o output.wav
-    // 2. Read the audio file and return it as base64 or a URL
-    
-    // Placeholder - replace with actual Kokoro integration
-    const response = {
-      message: 'TTS endpoint ready - integrate Kokoro CLI here',
+    const pyRes = await proxyToPython('/v1/audio/speech', {
       input,
-      voice: voice || 'af_sarah',
+      voice: voice || 'zf_xiaobei',
       speed: speed || 1.0,
-      note: 'Install Kokoro and configure kokoroPath in config'
-    };
+      lang: req.body.lang || 'zh',
+    });
     
-    res.json(response);
+    // Stream WAV audio back
+    res.set('Content-Type', 'audio/wav');
+    const buf = Buffer.from(await pyRes.arrayBuffer());
+    res.send(buf);
   } catch (error) {
     console.error('[TTS Error]', error);
     res.status(500).json({ error: error.message });
@@ -111,25 +120,23 @@ app.post('/v1/audio/transcriptions', upload.single('audio'), async (req, res) =>
     console.log(`[STT] Processing: ${audioPath}`);
     console.log(`[STT] Language: ${language || 'auto'}`);
 
-    // TODO: Integrate whisper.cpp
-    // In production, you would:
-    // 1. Run: ./main -m models/ggml-base.bin -f input.wav
-    // 2. Parse the output text
+    // Read audio and forward to Python service as base64
+    const audioBytes = fs.readFileSync(audioPath);
+    const audioData = audioBytes.toString('base64');
     
-    // Placeholder
-    const response = {
-      message: 'STT endpoint ready - integrate whisper.cpp here',
-      audio_path: audioPath,
-      language: language || 'auto',
-      note: 'Install whisper.cpp and configure whisperModelPath in config'
-    };
+    const pyRes = await proxyToPython('/v1/audio/transcriptions', {
+      audio_data: audioData,
+      language: language || null,
+    });
+    const result = await pyRes.json();
     
     // Clean up temp file
-    if (req.file) {
-      fs.unlinkSync(req.file.path);
+    if (req.file) fs.unlinkSync(req.file.path);
+    if (req.body.audio_data && fs.existsSync('/tmp/input_audio.wav')) {
+      fs.unlinkSync('/tmp/input_audio.wav');
     }
     
-    res.json(response);
+    res.json(result);
   } catch (error) {
     console.error('[STT Error]', error);
     res.status(500).json({ error: error.message });
