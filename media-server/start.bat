@@ -57,6 +57,20 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: ====== espeak-ng (required for TTS G2P) ======
+where espeak-ng >nul 2>&1
+if errorlevel 1 (
+    echo [Setup] espeak-ng not found, installing via winget...
+    winget install -e --id eSpeak.eSpeak-NG --silent
+    if errorlevel 1 (
+        echo [WARN] winget install failed.
+        echo Please manually install espeak-ng from:
+        echo https://github.com/espeak-ng/espeak-ng/releases
+        echo Then restart this script.
+        pause
+    )
+)
+
 :: ====== Node.js deps ======
 if not exist "node_modules" (
     echo [Setup] Installing Node.js dependencies...
