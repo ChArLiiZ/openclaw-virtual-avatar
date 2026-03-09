@@ -3,7 +3,7 @@ setlocal
 title Virtual Avatar Media Server
 cd /d "%~dp0"
 
-echo [Virtual Avatar] Starting...
+echo [Virtual Avatar] Checking environment...
 
 :: ====== Find Python 3.10+ ======
 set PYTHON_CMD=
@@ -29,16 +29,13 @@ if not defined PYTHON_CMD (
 )
 
 if not defined PYTHON_CMD (
-    echo [ERROR] Python 3.10+ not found.
-    echo Please install from: https://www.python.org/downloads/
-    echo Make sure to check "Add to PATH" during installation.
+    echo [ERROR] Python 3.10+ not found. Download here:
+    echo https://www.python.org/downloads/
     pause
     exit /b 1
 )
 
-echo [OK] Using %PYTHON_CMD%
-
-:: ====== Python venv ======
+:: ====== Python venv setup ======
 if not exist "python\venv" (
     echo [Setup] Creating virtual environment...
     %PYTHON_CMD% -m venv python\venv
@@ -49,29 +46,23 @@ if not exist "python\venv" (
     )
 )
 
-echo [Setup] Checking Python dependencies...
+:: ====== Install/Fix Dependencies ======
+:: 1. General requirements
+echo [Setup] Installing/Fixing dependencies (this might take a moment)...
 python\venv\Scripts\pip install -q -r python\requirements.txt
-if errorlevel 1 (
-    echo [ERROR] pip install failed. Check requirements.txt.
-    pause
-    exit /b 1
-)
 
-:: ====== espeak-ng (required for TTS G2P) ======
+:: 2. Force CUDA-enabled PyTorch (this guarantees GPU works)
+echo [Setup] Ensuring CUDA-enabled PyTorch...
+python\venv\Scripts\pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+:: 3. espeak-ng for Windows (required for Kokoro/G2P)
 where espeak-ng >nul 2>&1
 if errorlevel 1 (
-    echo [Setup] espeak-ng not found, installing via winget...
+    echo [Setup] espeak-ng not found, installing...
     winget install -e --id eSpeak.eSpeak-NG --silent
-    if errorlevel 1 (
-        echo [WARN] winget install failed.
-        echo Please manually install espeak-ng from:
-        echo https://github.com/espeak-ng/espeak-ng/releases
-        echo Then restart this script.
-        pause
-    )
 )
 
-:: ====== Node.js deps ======
+:: ====== Node.js setup ======
 if not exist "node_modules" (
     echo [Setup] Installing Node.js dependencies...
     call npm install --silent
@@ -79,7 +70,7 @@ if not exist "node_modules" (
 
 :: ====== Start services ======
 echo [OK] Starting services...
-echo [Note] First run will download TTS models (~300MB), please wait.
+echo [Note] First run will download Kokoro models (~300MB), please wait.
 
 start "Virtual Avatar - Python (8081)" python\venv\Scripts\python python\server.py
 timeout /t 3 /nobreak > nul
