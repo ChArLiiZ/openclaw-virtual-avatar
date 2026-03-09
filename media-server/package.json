@@ -6,16 +6,15 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "start:python": "cd python && python server.py",
+    "start:all": "concurrently -n Node,Python -c blue,green \"node src/index.js\" \"cd python && python server.py\"",
+    "dev": "concurrently -n Node,Python -c blue,green \"node --watch src/index.js\" \"cd python && python server.py\""
   },
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
     "body-parser": "^1.20.2",
-    "multer": "^1.4.5-lts.1"
-  },
-  "optionalDependencies": {
-    "kokoro-node": "^1.0.0",
-    "whisper.cpp": "^1.0.0"
+    "multer": "^1.4.5-lts.1",
+    "concurrently": "^8.2.2"
   }
 }
