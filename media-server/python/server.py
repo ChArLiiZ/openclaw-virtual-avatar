@@ -43,13 +43,14 @@ def get_pipeline(lang: str):
     kokoro = get_kokoro()
     if lang not in kokoro:
         from kokoro import KPipeline
+        # 0.7.x 用 lang 參數
         lang_code = {
-            "zh": "z",
-            "ja": "j",
-            "en": "a",
-        }.get(lang, "a")
+            "zh": "zh",
+            "ja": "ja",
+            "en": "en-us",
+        }.get(lang, "en-us")
         print(f"[TTS] Loading Kokoro pipeline for lang={lang} (code={lang_code})")
-        kokoro[lang] = KPipeline(lang_code=lang_code)
+        kokoro[lang] = KPipeline(lang=lang_code)
     return kokoro[lang]
 
 def get_whisper():
