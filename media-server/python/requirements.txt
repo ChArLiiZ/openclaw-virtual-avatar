@@ -3,21 +3,15 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.0.0
 python-multipart>=0.0.9
+aiofiles>=23.0.0
 
-# TTS - kokoro-onnx (支援 Python 3.10–3.13)
-kokoro-onnx>=0.5.0
-soundfile>=0.12.1
-numpy>=1.26.0
+# TTS - F5-TTS
+f5-tts>=1.0.0
 
-# 中文 G2P 支援
-misaki[zh]>=0.7.0
-
-# 日文 G2P 支援
-misaki[ja]>=0.7.0
+# PyTorch + CUDA (RTX 4070 = CUDA 12.x)
+# 若安裝失敗請改用: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+torch>=2.4.0
+torchaudio>=2.4.0
 
 # STT - faster-whisper (CUDA)
 faster-whisper>=1.0.0
-
-# CUDA (需已安裝 CUDA 12.x + cuDNN)
-# onnxruntime-gpu 提供 CUDA 加速給 kokoro-onnx
-onnxruntime-gpu>=1.17.0

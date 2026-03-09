@@ -143,13 +143,25 @@ Content-Type: application/json
 - **Live2D / VRM 渲染視窗**：使用 Web 技術（Three.js / PIXI.js）在本地視窗顯示角色
 - **Lip-sync**：TTS 語音 ↔ 模型嘴型同步
 - **表情控制**：由 OpenClaw Agent 驅動角色表情與動作
-- **設定 UI**：可視化設定 serverUrl、聲音、模型路徑等
+- **聲音克隆 UI**：在介面上直接上傳參考音訊（3 秒以上）完成聲音克隆，無需手動操作 API
+- **聲音管理**：新增、試聽、刪除已儲存的聲音
 
 ```
 Tauri App（本地電腦）
-├── 後端（Rust）       ← 輕量系統服務、托盤管理
-├── Python sidecar    ← Kokoro TTS / faster-whisper
-└── 前端（Vue + Web） ← Live2D/VRM 渲染 + 設定介面
+├── 後端（Rust）          ← 輕量系統服務、托盤管理
+├── Python sidecar       ← F5-TTS / faster-whisper
+└── 前端（Vue + Web）    ← Live2D/VRM 渲染 + 聲音管理 UI
+```
+
+**聲音克隆流程（規劃中）：**
+```
+使用者錄音或上傳音訊（3秒+）
+    ↓
+輸入該音訊對應的文字
+    ↓
+送出 → 存為具名聲音（如 "vivian"）
+    ↓
+之後 TTS 直接指定 voice="vivian"
 ```
 
 > 參考：AIRI 採用 Tauri + Vue + PIXI.js/Three.js 實作，Live2D 與 VRM 均有良好支援。
