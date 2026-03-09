@@ -8,10 +8,8 @@ aiofiles>=23.0.0
 # TTS - F5-TTS
 f5-tts>=1.0.0
 
-# PyTorch + CUDA (RTX 4070 = CUDA 12.x)
-# 若安裝失敗請改用: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
-torch>=2.4.0
-torchaudio>=2.4.0
+# PyTorch / torchaudio 不放在 requirements.txt
+# 由 start.bat 依 Windows + CUDA 環境強制安裝相容版本，避免被 pip 自動解析成 CPU 版。
 
 # STT - faster-whisper (CUDA)
 faster-whisper>=1.0.0

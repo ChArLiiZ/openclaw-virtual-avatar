@@ -9,9 +9,10 @@ echo [Virtual Avatar] Checking environment...
 set PYTHON_CMD=
 
 :: Try py launcher first
+:: Prefer Python 3.12/3.11/3.10 for better PyTorch CUDA compatibility.
 where py >nul 2>&1
 if not errorlevel 1 (
-    for %%v in (3.13 3.12 3.11 3.10) do (
+    for %%v in (3.12 3.11 3.10) do (
         if not defined PYTHON_CMD (
             py -%%v --version >nul 2>&1
             if not errorlevel 1 set PYTHON_CMD=py -%%v
@@ -23,13 +24,14 @@ if not errorlevel 1 (
 if not defined PYTHON_CMD (
     where python >nul 2>&1
     if not errorlevel 1 (
-        python -c "import sys; exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
+        python -c "import sys; exit(0 if (3,10) <= sys.version_info[:2] <= (3,12) else 1)" >nul 2>&1
         if not errorlevel 1 set PYTHON_CMD=python
     )
 )
 
 if not defined PYTHON_CMD (
-    echo [ERROR] Python 3.10+ not found. Download here:
+    echo [ERROR] Compatible Python not found.
+    echo [ERROR] Please install Python 3.10, 3.11, or 3.12. Python 3.13 is currently not recommended for this project.
     echo https://www.python.org/downloads/
     pause
     exit /b 1
@@ -47,13 +49,18 @@ if not exist "python\venv" (
 )
 
 :: ====== Install/Fix Dependencies ======
-:: 1. General requirements
-echo [Setup] Installing/Fixing dependencies (this might take a moment)...
-python\venv\Scripts\pip install -q -r python\requirements.txt
+:: 1. Upgrade pip tooling first
+echo [Setup] Upgrading pip tooling...
+python\venv\Scripts\python -m pip install -q --upgrade pip setuptools wheel
 
-:: 2. Force CUDA-enabled PyTorch (this guarantees GPU works)
+:: 2. General requirements (without torch)
+echo [Setup] Installing/Fixing Python dependencies (this might take a moment)...
+python\venv\Scripts\python -m pip install -q -r python\requirements.txt
+
+:: 3. Force CUDA-enabled PyTorch (do not allow CPU wheel to remain)
 echo [Setup] Ensuring CUDA-enabled PyTorch...
-python\venv\Scripts\pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+python\venv\Scripts\python -m pip uninstall -y torch torchaudio torchvision >nul 2>&1
+python\venv\Scripts\python -m pip install -q --no-cache-dir --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 :: 3. espeak-ng for Windows (required for Kokoro/G2P)
 where espeak-ng >nul 2>&1
