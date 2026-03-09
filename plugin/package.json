@@ -1,0 +1,13 @@
+{
+  "name": "@openclaw/virtual-avatar",
+  "version": "0.1.0",
+  "description": "Remote TTS, STT, and Live2D/VRM control plugin for OpenClaw",
+  "main": "src/index.ts",
+  "type": "module",
+  "dependencies": {
+    "@sinclair/typebox": "^0.32.0"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.0.0"
+  }
+}

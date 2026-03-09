@@ -1,0 +1,25 @@
+{
+  "id": "openclaw-virtual-avatar",
+  "name": "Remote Media",
+  "description": "TTS, STT, and Live2D/VRM control via local media server",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "serverUrl": {
+        "type": "string",
+        "description": "Tailnet IP of the local media server (e.g., http://100.x.x.x:port)"
+      },
+      "defaultTtsVoice": {
+        "type": "string",
+        "description": "Default voice ID for TTS"
+      },
+      "defaultModel": {
+        "type": "string",
+        "description": "Default Live2D/VRM model path"
+      }
+    },
+    "required": ["serverUrl"]
+  }
+}
