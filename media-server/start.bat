@@ -99,6 +99,21 @@ if not defined TORCH_OK (
 
 echo [Setup] Selected PyTorch index: %TORCH_INDEX%
 
+echo [Setup] Installing TorchCodec...
+%VENV_PY% -m pip install -q --no-cache-dir --force-reinstall torchcodec
+if errorlevel 1 (
+    echo [ERROR] Failed to install torchcodec.
+    pause
+    exit /b 1
+)
+
+%VENV_PY% -c "import torch, torchcodec; print('[TorchCodec] OK'); print('[Torch]', torch.__version__); print('[CUDA available]', torch.cuda.is_available())"
+if errorlevel 1 (
+    echo [ERROR] TorchCodec verification failed.
+    pause
+    exit /b 1
+)
+
 :: ====== Optional Windows dependencies ======
 where espeak-ng >nul 2>&1
 if errorlevel 1 (
