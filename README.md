@@ -1,178 +1,74 @@
-# Virtual Avatar
+# Virtual Avatar (OpenClaw Plugin + Local Media Server)
 
-讓 OpenClaw 擁有虛擬角色能力（TTS、STT、Live2D/VRM）的完整解決方案。
+讓 OpenClaw 擁有虛擬角色互動能力的完整解決方案：TTS (F5-TTS)、STT (faster-whisper)、以及 Live2D/VRM 模型控制。
 
-## 專案結構
+## 架構說明
 
-```
-virtual-avatar/
-├── plugin/                 # OpenClaw Plugin
-│   ├── openclaw.plugin.json
-│   ├── package.json
-│   └── src/
-│       └── index.ts       # 工具定義
-├── media-server/           # 本地端媒體伺服器
-│   ├── package.json
-│   └── src/
-│       └── index.js       # API 伺服器
-├── README.md
-└── .gitignore
-```
-
-## 功能
-
-| 功能 | 說明 | 狀態 |
-|------|------|------|
-| **TTS** | 文字轉語音 (Kokoro) | 待整合 |
-| **STT** | 語音轉文字 (whisper.cpp) | 待整合 |
-| **Live2D/VRM** | 模型控制與顯示 | 待整合 |
-
-## 快速開始
-
-### 1. Clone 到本地電腦
-
-```bash
-git clone <repository-url>
-cd virtual-avatar
-```
-
-### 2. 安裝媒體伺服器依賴
-
-```bash
-cd media-server
-npm install
-```
-
-### 3. 啟動（首次會自動下載模型）
-
-模型會在第一次使用時自動下載，無需手動操作：
-
-| 模型 | 大小 | 說明 |
-|------|------|------|
-| kokoro-v1.0.onnx | ~300MB | TTS 主模型 |
-| voices-v1.0.bin | ~9MB | 聲音包 |
-| faster-whisper base | ~145MB | STT 模型 |
-
-#### 支援語言與聲音
-| 語言 | lang 參數 | 推薦聲音 |
-|------|-----------|---------|
-| 中文 | `zh` | `zf_xiaobei`、`zf_xiaoni` |
-| 日文 | `ja` | `jf_alpha`、`jf_gongitsune` |
-| 英文 | `en` | `af_heart`、`af_bella` |
-
-### 4. 啟動媒體伺服器
-
-```bash
-cd media
--server
-npm start```
-
-伺服器會在 `http://localhost:8080` 啟動。
-
-### 5. 配置 OpenClaw Plugin
-
-（待完成：需要先發布插件到 npm 或設定本地載入）
-
-## API 端點
-
-### TTS
-```bash
-POST /v1/audio/speech
-Content-Type: application/json
-
-{
-  "input": "你好，我是虛擬角色",
-  "voice": "af_sarah",
-  "speed": 1.0
-}
-```
-
-### STT
-```bash
-POST /v1/audio/transcriptions
-Content-Type: multipart/form-data
-
-# 上傳音訊檔案
-```
-
-### Live2D 控制
-```bash
-POST /live2d/express
-Content-Type: application/json
-
-{
-  "expression": "happy",
-  "blink": true,
-  "mouth_open": 0.5,
-  "look_at_x": 0.5,
-  "look_at_y": 0.5
-}
-```
-
-## 技術栈
-
-- **TTS**: [Kokoro](https://github.com/remsky/Kokoro) - 離線、高品質多語言 TTS
-- **STT**: [whisper.cpp](https://github.com/ggerganov/whisper.cpp) - 高效能本地 STT
-- **Live2D**: [AIRI stage-ui](https://github.com/moeru-ai/airi) 或 Vtuber Studio
-- **通訊**: Tailnet (Tailscale) - 讓 VPS 與本地伺服器通訊
-
-## 網路架構
+- **Plugin (VPS)**: OpenClaw 插件，透過 API 呼叫與本地代理通訊。
+- **Media Server (Local Windows PC)**: Python 服務（FastAPI），運用 RTX 4070 GPU 加速計算。
 
 ```
 ┌────────────────┐                      ┌─────────────────────┐
 │  OpenClaw      │  ◄── Tailscale ────► │  Local Media Server │
-│  (VPS)         │   100.x.x.x          │  (本地電腦)        │
+│  (VPS)         │   100.x.x.x          │  (您的本地電腦)      │
 │  Plugin        │                      │                     │
 └────────────────┘                      └─────────────────────┘
+       │                                        │
+       │ API 調用 (TTS/STT/Live2D)              │ - F5-TTS (CUDA)
+                                                 │ - faster-whisper (CUDA)
+                                                 │ - Live2D/VRM 顯示
 ```
+
+## 快速開始
+
+### 1. 複製倉庫
+```bash
+git clone https://github.com/ChArLiiZ/openclaw-virtual-avatar.git
+cd openclaw-virtual-avatar
+```
+
+### 2. 啟動服務 (自動化部署)
+
+直接執行目錄下的 `start.bat`，它會：
+1. 自動下載並檢查 Python 3.10+ 環境
+2. 建立 `venv` 並安裝所有 Python 相依套件
+3. 自動安裝 Node.js 相依套件
+4. 自動啟動 Python/Node 雙服務
+
+```bash
+cd media-server
+start.bat
+```
+
+> **提示**：首次啟動會自動從 HuggingFace 下載 F5-TTS 模型（約 ~300MB）。
+
+## 功能說明
+
+| 功能 | 技術 | 狀態 |
+|------|------|------|
+| **TTS** | F5-TTS (Zero-shot Cloning) | ✅ 測試通過 |
+| **STT** | faster-whisper (CUDA) | ✅ 可用 |
+| **Live2D** | AIRI stage-ui 橋接 | 規劃中 |
+
+## 聲音克隆 (F5-TTS)
+
+我們的服務支援聲音克隆，只需提供 3 秒的參考音訊：
+
+1. **上傳聲音**： `POST /voices/{name}` (包含 `audio` 檔案與 `ref_text` 文字)
+2. **使用聲音**：調用 `/v1/audio/speech` 時，指定 `voice="{name}"`
 
 ## Roadmap
 
-### 目前（v0.x）— 基礎服務架構
-- [x] Node.js HTTP API 伺服器骨架
-- [x] Python FastAPI 服務（Kokoro TTS + faster-whisper STT）
-- [x] Tailscale 通訊（VPS ↔ 本地電腦）
-- [x] 一鍵啟動腳本（start.bat / start.sh）
-- [ ] OpenClaw Plugin 正式載入
-- [ ] Live2D / VRM 顯示整合（AIRI stage-ui）
+### 目前 (v0.x)
+- [x] Node.js API 伺服器代理
+- [x] Python F5-TTS 服務整合 (CUDA)
+- [x] 離線 Whisper STT 整合
+- [x] 完善的 Windows 一鍵啟動 (start.bat)
 
-### 未來（v1.0）— Tauri 桌面應用程式
-將整個媒體伺服器打包為 **Tauri 桌面應用程式**，參考 [AIRI 專案](https://github.com/moeru-ai/airi) 的架構：
-
-- **系統托盤常駐**：右下角圖示，一鍵開關服務
-- **Live2D / VRM 渲染視窗**：使用 Web 技術（Three.js / PIXI.js）在本地視窗顯示角色
-- **Lip-sync**：TTS 語音 ↔ 模型嘴型同步
-- **表情控制**：由 OpenClaw Agent 驅動角色表情與動作
-- **聲音克隆 UI**：在介面上直接上傳參考音訊（3 秒以上）完成聲音克隆，無需手動操作 API
-- **聲音管理**：新增、試聽、刪除已儲存的聲音
-
-```
-Tauri App（本地電腦）
-├── 後端（Rust）          ← 輕量系統服務、托盤管理
-├── Python sidecar       ← F5-TTS / faster-whisper
-└── 前端（Vue + Web）    ← Live2D/VRM 渲染 + 聲音管理 UI
-```
-
-**聲音克隆流程（規劃中）：**
-```
-使用者錄音或上傳音訊（3秒+）
-    ↓
-輸入該音訊對應的文字
-    ↓
-送出 → 存為具名聲音（如 "vivian"）
-    ↓
-之後 TTS 直接指定 voice="vivian"
-```
-
-> 參考：AIRI 採用 Tauri + Vue + PIXI.js/Three.js 實作，Live2D 與 VRM 均有良好支援。
-
-## 相關資源
-
-- [AIRI 專案](https://github.com/moeru-ai/airi) — 主要架構參考
-- [Kokoro TTS](https://huggingface.co/hexgrad/Kokoro-82M) — 離線 TTS 模型
-- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — 高效能本地 STT
-- [Tauri](https://tauri.app/) — 桌面應用程式框架
+### 未來 (v1.0)
+- **Tauri 桌面應用**：將轉語音與 Live2D 畫面整合進獨立 App，支援右下角托盤運作。
+- **即時 Lip-sync**：模型嘴型與 TTS 語音即時同步。
+- **表情 UI**：在介面上直接調整 Live2D 表情參數。
 
 ## License
-
 MIT
