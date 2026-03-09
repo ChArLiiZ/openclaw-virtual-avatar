@@ -55,7 +55,7 @@ def get_whisper():
     global _whisper
     if _whisper is None:
         from faster_whisper import WhisperModel
-        model_size = os.getenv("WHISPER_MODEL", "base")
+        model_size = os.getenv("WHISPER_MODEL", "medium")
         print(f"[STT] Loading faster-whisper: {model_size}")
         _whisper = WhisperModel(model_size, device="cuda", compute_type="float16")
         print("[STT] faster-whisper loaded")
@@ -178,7 +178,14 @@ async def speech_to_text(req: STTRequest):
             f.write(audio_bytes)
             tmp_path = f.name
         
-        segments, info = model.transcribe(tmp_path, language=req.language, beam_size=5)
+        segments, info = model.transcribe(
+            tmp_path,
+            language=req.language,
+            beam_size=5,
+            vad_filter=True,
+            condition_on_previous_text=False,
+            temperature=0.0,
+        )
         text = " ".join(seg.text for seg in segments).strip()
         
         return {"text": text, "language": info.language, "duration": info.duration}
@@ -205,7 +212,14 @@ async def speech_to_text_upload(
             f.write(contents)
             tmp_path = f.name
         
-        segments, info = model.transcribe(tmp_path, language=language, beam_size=5)
+        segments, info = model.transcribe(
+            tmp_path,
+            language=language,
+            beam_size=5,
+            vad_filter=True,
+            condition_on_previous_text=False,
+            temperature=0.0,
+        )
         text = " ".join(seg.text for seg in segments).strip()
         return {"text": text, "language": info.language}
     except Exception as e:
