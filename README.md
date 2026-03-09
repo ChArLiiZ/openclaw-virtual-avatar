@@ -1,16 +1,16 @@
 # OpenClaw Virtual Avatar
 
-OpenClaw 的虛擬角色系統專案，包含：
+OpenClaw 的虛擬角色系統專案，整合了：
 
-- **OpenClaw plugin**（跑在 VPS）
-- **Local media server**（跑在本地 Windows 電腦）
-- **TTS / STT / Live2D / VRM** 的整合基礎
+- **OpenClaw plugin**（部署於 VPS）
+- **Local media server**（部署於本地 Windows 電腦）
+- **TTS / STT / Live2D / VRM** 的本地推理與控制基礎
 
-目前仍在開發中。
+目前專案仍在開發中。
 
 ---
 
-## 目前架構
+## Overview
 
 ```text
 OpenClaw (VPS)
@@ -25,26 +25,27 @@ Local Windows PC
        └─ Node.js proxy server
 ```
 
-### 目前使用方向
+### Current stack
 
-- **TTS**：F5-TTS（支援 voice cloning）
-- **STT**：faster-whisper
-- **傳輸**：Tailscale
-- **未來桌面端**：Tauri
-- **Live2D / VRM**：預留整合中
+- **TTS**: F5-TTS
+- **Voice cloning**: supported
+- **STT**: faster-whisper
+- **Transport**: Tailscale
+- **Desktop app target**: Tauri
+- **Avatar layer**: Live2D / VRM integration in progress
 
 ---
 
-## 專案結構
+## Project structure
 
 ```text
 openclaw-virtual-avatar/
 ├─ plugin/                 # OpenClaw plugin
-├─ media-server/           # 本地媒體服務
-│  ├─ src/                 # Node.js proxy
+├─ media-server/           # Local media service
+│  ├─ src/                 # Node.js proxy server
 │  ├─ python/              # Python FastAPI service
-│  ├─ environment.yml      # conda environment
-│  └─ start.bat            # Windows 一鍵啟動
+│  ├─ environment.yml      # Conda environment definition
+│  └─ start.bat            # Windows one-click launcher
 ├─ README.md
 └─ .gitignore
 ```
@@ -53,39 +54,35 @@ openclaw-virtual-avatar/
 
 ## media-server
 
-`media-server` 負責本地的重型能力：
+`media-server` handles local heavy workloads, including:
 
-- 語音合成（TTS）
-- 語音辨識（STT）
-- 未來的 Live2D / VRM 控制
+- text-to-speech
+- speech-to-text
+- future avatar playback / model control
 
-### 啟動方式
+### Start
 
-進入 `media-server/` 後直接執行：
+From `media-server/`, run:
 
 ```bat
 start.bat
 ```
 
-### `start.bat` 目前會做的事
+### What `start.bat` currently does
 
-- 自動檢查 / 安裝 **Miniforge (conda)**
-- 建立 / 更新 conda 環境
-- 安裝 Python 相依
-- 安裝 GPU 版 PyTorch
-- 安裝 `torchcodec`
-- 啟動 Python service
-- 啟動 Node.js proxy
-
-> 目前是開發版流程，後續仍可能調整。
+- checks / installs **Miniforge (conda)**
+- creates or updates the conda environment
+- installs Python dependencies
+- installs GPU PyTorch
+- installs `torchcodec`
+- starts the Python service
+- starts the Node.js proxy server
 
 ---
 
-## 目前 API
+## Current API
 
-### Python service
-
-預設埠號：`8081`
+### Python service (`8081`)
 
 - `GET /health`
 - `GET /voices`
@@ -95,9 +92,7 @@ start.bat
 - `POST /v1/audio/transcriptions`
 - `POST /v1/audio/transcriptions/upload`
 
-### Node.js proxy
-
-預設埠號：`8080`
+### Node.js proxy (`8080`)
 
 - `GET /health`
 - `GET /voices`
@@ -111,23 +106,40 @@ start.bat
 
 ---
 
-## 聲音克隆
+## Voice cloning
 
-目前已支援：
+Voice cloning is currently supported through:
 
-1. 上傳參考音訊到 `/voices/{voice_name}`
-2. 提供對應 `ref_text`
-3. 之後用 `/v1/audio/speech` 指定 `voice`
+1. upload reference audio to `/voices/{voice_name}`
+2. upload matching `ref_text`
+3. call `/v1/audio/speech` with the target `voice`
 
-目前已驗證能成功產生自訂 voice 的 TTS 音訊。
+This flow has been validated end-to-end with custom voice generation.
+
+---
+
+## STT status
+
+The faster-whisper pipeline is connected and working.
+
+Current implementation includes:
+
+- `medium` model by default
+- lightweight preprocessing before transcription
+  - mono conversion
+  - 16kHz resampling
+  - mild high-pass filter
+- VAD enabled
+
+The current STT path is functional, but transcription quality for game voice lines and uncommon proper nouns still needs further tuning.
 
 ---
 
 ## OpenClaw plugin
 
-`plugin/` 目標是讓 OpenClaw 可以直接呼叫本地 media server。
+The `plugin/` directory is intended to expose local avatar/media features to OpenClaw.
 
-目前已包含工具雛形：
+Current tool stubs include:
 
 - `remote_tts`
 - `remote_stt`
@@ -135,34 +147,42 @@ start.bat
 - `live2d_load_model`
 - `live2d_get_frame`
 
-目前 plugin 仍在開發中，尚未整理成正式可安裝釋出版本。
+The plugin is still in development and is not yet packaged as a final installable release.
 
 ---
 
-## 開發現況
+## Current status
 
-### 已完成
+### Done
 
-- 單一 git 專案整合 plugin + media-server
-- F5-TTS 基本語音克隆流程打通
-- 本地 voice 參考音訊上傳 / 使用流程打通
-- Node / Python 雙服務可正常啟動
-- conda-based `start.bat` 啟動流程
+- integrated plugin + media-server into a single git project
+- F5-TTS voice cloning flow working end-to-end
+- local voice upload / storage / reuse flow working
+- Python + Node dual-service startup working
+- conda-based Windows launcher working
+- TTS generation tested successfully
+- Python STT and Node proxy STT both working
+- lightweight STT preprocessing added
 
-### 下一步
+### Next
 
-- 驗證 / 補齊 faster-whisper STT 流程
-- 持續整理 plugin 設定與載入方式
-- 開始規劃最小可用的 Tauri UI
-- 後續整合 Live2D / VRM
+- continue improving faster-whisper quality
+- clean up plugin config and loading workflow
+- start a minimal Tauri desktop UI
+- add local audio playback flow in the desktop app
+- continue Live2D / VRM integration
+- prepare voice management UI for future desktop builds
 
 ---
 
-## 備註
+## Notes
 
-這個專案目前以 **Windows 本地開發 + VPS 上的 OpenClaw** 為主要目標。
+This project currently targets:
 
-正式產品化前，啟動流程、環境封裝、UI 與模型管理方式都還會繼續調整。
+- **OpenClaw on VPS**
+- **local media inference on Windows**
+
+Before productization, the launcher flow, environment packaging, desktop UX, and model management will continue to evolve.
 
 ---
 
