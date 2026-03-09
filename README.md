@@ -43,12 +43,15 @@ cd media-server
 npm install
 ```
 
-### 3. 下載模型檔案（首次需要）
+### 3. 啟動（首次會自動下載模型）
 
-#### Kokoro TTS 模型
-下載以下兩個檔案，放入 `media-server/python/` 資料夾：
-- [kokoro-v1.0.onnx](https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx)（~300MB）
-- [voices-v1.0.bin](https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin)（~9MB）
+模型會在第一次使用時自動下載，無需手動操作：
+
+| 模型 | 大小 | 說明 |
+|------|------|------|
+| kokoro-v1.0.onnx | ~300MB | TTS 主模型 |
+| voices-v1.0.bin | ~9MB | 聲音包 |
+| faster-whisper base | ~145MB | STT 模型 |
 
 #### 支援語言與聲音
 | 語言 | lang 參數 | 推薦聲音 |
@@ -56,9 +59,6 @@ npm install
 | 中文 | `zh` | `zf_xiaobei`、`zf_xiaoni` |
 | 日文 | `ja` | `jf_alpha`、`jf_gongitsune` |
 | 英文 | `en` | `af_heart`、`af_bella` |
-
-#### faster-whisper STT 模型
-首次啟動時自動從 HuggingFace 下載（預設 `base`，約 145MB）。
 
 ### 4. 啟動媒體伺服器
 

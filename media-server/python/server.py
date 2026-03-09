@@ -25,6 +25,35 @@ import numpy as np
 
 app = FastAPI(title="Virtual Avatar Python Service", version="0.1.0")
 
+# ==================== Model auto-download ====================
+
+MODELS_DIR = Path(__file__).parent / "models"
+KOKORO_MODEL_PATH  = MODELS_DIR / "kokoro-v1.0.onnx"
+KOKORO_VOICES_PATH = MODELS_DIR / "voices-v1.0.bin"
+
+KOKORO_URLS = {
+    "kokoro-v1.0.onnx":  "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
+    "voices-v1.0.bin":   "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+}
+
+def download_file(url: str, dest: Path):
+    import urllib.request
+    MODELS_DIR.mkdir(exist_ok=True)
+    print(f"[Download] {dest.name} ...")
+    def progress(count, block, total):
+        pct = min(count * block / total * 100, 100)
+        print(f"\r  {dest.name}: {pct:.1f}%", end="", flush=True)
+    urllib.request.urlretrieve(url, dest, reporthook=progress)
+    print()  # newline after progress
+
+def ensure_kokoro_models():
+    for filename, url in KOKORO_URLS.items():
+        dest = MODELS_DIR / filename
+        if not dest.exists():
+            print(f"[Setup] Model not found: {filename}, downloading...")
+            download_file(url, dest)
+            print(f"[Setup] {filename} ready.")
+
 # ==================== Lazy-load models ====================
 _kokoro = None
 _whisper = None
@@ -32,11 +61,10 @@ _whisper = None
 def get_kokoro():
     global _kokoro
     if _kokoro is None:
+        ensure_kokoro_models()
         from kokoro_onnx import Kokoro
-        model_path  = os.getenv("KOKORO_MODEL",  "kokoro-v1.0.onnx")
-        voices_path = os.getenv("KOKORO_VOICES", "voices-v1.0.bin")
-        print(f"[TTS] Loading kokoro-onnx: {model_path}")
-        _kokoro = Kokoro(model_path, voices_path)
+        print(f"[TTS] Loading kokoro-onnx...")
+        _kokoro = Kokoro(str(KOKORO_MODEL_PATH), str(KOKORO_VOICES_PATH))
         print("[TTS] kokoro-onnx loaded")
     return _kokoro
 
