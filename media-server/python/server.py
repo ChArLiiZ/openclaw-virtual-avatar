@@ -16,6 +16,7 @@ import io
 import tempfile
 import base64
 import shutil
+import subprocess
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
@@ -164,9 +165,35 @@ class STTRequest(BaseModel):
     audio_data: str | None = None
     language: str | None = None
 
+
+def preprocess_audio_for_stt(input_path: str) -> str:
+    """Lightweight preprocessing for Whisper: mono + 16kHz + mild highpass."""
+    fd, output_path = tempfile.mkstemp(suffix="_stt.wav")
+    os.close(fd)
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-ac", "1",
+        "-ar", "16000",
+        "-af", "highpass=f=80",
+        "-c:a", "pcm_s16le",
+        output_path,
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return output_path
+    except Exception:
+        if os.path.exists(output_path):
+            os.unlink(output_path)
+        raise
+
+
 @app.post("/v1/audio/transcriptions")
 async def speech_to_text(req: STTRequest):
     tmp_path = None
+    processed_path = None
     try:
         model = get_whisper()
         
@@ -177,9 +204,11 @@ async def speech_to_text(req: STTRequest):
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             f.write(audio_bytes)
             tmp_path = f.name
+
+        processed_path = preprocess_audio_for_stt(tmp_path)
         
         segments, info = model.transcribe(
-            tmp_path,
+            processed_path,
             language=req.language,
             beam_size=5,
             vad_filter=True,
@@ -197,6 +226,8 @@ async def speech_to_text(req: STTRequest):
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+        if processed_path and os.path.exists(processed_path):
+            os.unlink(processed_path)
 
 @app.post("/v1/audio/transcriptions/upload")
 async def speech_to_text_upload(
@@ -204,6 +235,7 @@ async def speech_to_text_upload(
     language: str | None = None,
 ):
     tmp_path = None
+    processed_path = None
     try:
         model = get_whisper()
         suffix = Path(file.filename).suffix or ".wav"
@@ -211,9 +243,11 @@ async def speech_to_text_upload(
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
             f.write(contents)
             tmp_path = f.name
+
+        processed_path = preprocess_audio_for_stt(tmp_path)
         
         segments, info = model.transcribe(
-            tmp_path,
+            processed_path,
             language=language,
             beam_size=5,
             vad_filter=True,
@@ -227,6 +261,8 @@ async def speech_to_text_upload(
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+        if processed_path and os.path.exists(processed_path):
+            os.unlink(processed_path)
 
 # ==================== Health ====================
 
