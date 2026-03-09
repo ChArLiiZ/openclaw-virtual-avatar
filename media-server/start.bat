@@ -99,6 +99,19 @@ if not defined TORCH_OK (
 
 echo [Setup] Selected PyTorch index: %TORCH_INDEX%
 
+:: ====== Optional Windows dependencies ======
+where ffmpeg >nul 2>&1
+if errorlevel 1 (
+    echo [Setup] FFmpeg not found, installing shared build...
+    winget install -e --id Gyan.FFmpeg.Shared --silent --accept-package-agreements --accept-source-agreements
+)
+
+where espeak-ng >nul 2>&1
+if errorlevel 1 (
+    echo [Setup] espeak-ng not found, installing...
+    winget install -e --id eSpeak.eSpeak-NG --silent --accept-package-agreements --accept-source-agreements
+)
+
 echo [Setup] Installing TorchCodec...
 %VENV_PY% -m pip install -q --no-cache-dir --force-reinstall torchcodec
 if errorlevel 1 (
@@ -109,16 +122,9 @@ if errorlevel 1 (
 
 %VENV_PY% -c "import torch, torchcodec; print('[TorchCodec] OK'); print('[Torch]', torch.__version__); print('[CUDA available]', torch.cuda.is_available())"
 if errorlevel 1 (
-    echo [ERROR] TorchCodec verification failed.
+    echo [ERROR] TorchCodec verification failed. This usually means FFmpeg shared DLLs are still unavailable to Python.
     pause
     exit /b 1
-)
-
-:: ====== Optional Windows dependencies ======
-where espeak-ng >nul 2>&1
-if errorlevel 1 (
-    echo [Setup] espeak-ng not found, installing...
-    winget install -e --id eSpeak.eSpeak-NG --silent
 )
 
 :: ====== Node.js setup ======
