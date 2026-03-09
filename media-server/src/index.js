@@ -148,49 +148,32 @@ app.post('/v1/audio/speech', async (req, res) => {
 
 /**
  * POST /v1/audio/transcriptions
- * Speech-to-Text using whisper.cpp
- * 
- * Body: { audio_url?: string, audio_data?: string, language?: string }
- * Returns: { text?: string }
+ * Speech-to-Text using faster-whisper via Python service
+ *
+ * Accepts multipart file upload or base64 audio_data.
  */
 app.post('/v1/audio/transcriptions', upload.single('audio'), async (req, res) => {
   try {
-    let audioPath = req.body.audio_path;
     const language = req.body.language;
-    
-    // Handle file upload
-    if (req.file) {
-      audioPath = req.file.path;
-    } else if (req.body.audio_data) {
-      // Decode base64 audio and save to temp file
-      const buffer = Buffer.from(req.body.audio_data, 'base64');
-      audioPath = '/tmp/input_audio.wav';
-      fs.writeFileSync(audioPath, buffer);
-    }
+    let audioData = req.body.audio_data || null;
 
-    if (!audioPath) {
+    if (req.file?.buffer) {
+      audioData = req.file.buffer.toString('base64');
+      console.log(`[STT] Processing uploaded file: ${req.file.originalname || 'audio'}`);
+    } else if (audioData) {
+      console.log('[STT] Processing base64 audio payload');
+    } else {
       return res.status(400).json({ error: 'audio file is required' });
     }
 
-    console.log(`[STT] Processing: ${audioPath}`);
     console.log(`[STT] Language: ${language || 'auto'}`);
 
-    // Read audio and forward to Python service as base64
-    const audioBytes = fs.readFileSync(audioPath);
-    const audioData = audioBytes.toString('base64');
-    
     const pyRes = await proxyToPython('/v1/audio/transcriptions', {
       audio_data: audioData,
       language: language || null,
     });
     const result = await pyRes.json();
-    
-    // Clean up temp file
-    if (req.file) fs.unlinkSync(req.file.path);
-    if (req.body.audio_data && fs.existsSync('/tmp/input_audio.wav')) {
-      fs.unlinkSync('/tmp/input_audio.wav');
-    }
-    
+
     res.json(result);
   } catch (error) {
     console.error('[STT Error]', error);
