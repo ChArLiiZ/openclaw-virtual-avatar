@@ -1,11 +1,11 @@
 /**
  * Virtual Avatar Media Server
- * 
+ *
  * Provides HTTP API for:
- * - TTS (Text-to-Speech) using Kokoro
- * - STT (Speech-to-Text) using whisper.cpp
+ * - TTS (Text-to-Speech) using F5-TTS via Python service
+ * - STT (Speech-to-Text) using faster-whisper via Python service
  * - Live2D/VRM model control
- * 
+ *
  * Run: npm install && npm start
  */
 
@@ -26,8 +26,8 @@ app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
 // Multer for file uploads
-const upload = multer({ 
-  dest: 'uploads/',
+const upload = multer({
+  storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 } // 50MB max
 });
 
@@ -37,20 +37,57 @@ const CONFIG = {
   live2dModelPath: process.env.LIVE2D_MODEL_PATH || './models',
 };
 
+// Proxy helper to Python service
+async function proxyToPython(endpoint, body) {
+  const url = `${CONFIG.pythonServiceUrl}${endpoint}`;
+  const pyRes = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!pyRes.ok) {
+    const err = await pyRes.text();
+    throw new Error(`Python service error: ${pyRes.status} ${err}`);
+  }
+  return pyRes;
+}
+
 // Proxy voice endpoints
 app.post('/voices/:voiceName', upload.single('audio'), async (req, res) => {
   try {
-    // 重新封裝上傳的檔案
+    if (!req.file) {
+      return res.status(400).json({ error: 'audio file is required' });
+    }
+    if (!req.body.ref_text) {
+      return res.status(400).json({ error: 'ref_text is required' });
+    }
+
     const formData = new FormData();
-    formData.append('audio', new Blob([req.file.buffer]), req.file.originalname);
+    formData.append('audio', new Blob([req.file.buffer]), req.file.originalname || 'ref.wav');
     formData.append('ref_text', req.body.ref_text);
-    
+
     const url = `${CONFIG.pythonServiceUrl}/voices/${req.params.voiceName}`;
     const pyRes = await fetch(url, {
       method: 'POST',
       body: formData,
     });
-    
+
+    if (!pyRes.ok) {
+      const err = await pyRes.text();
+      throw new Error(`Python service error: ${pyRes.status} ${err}`);
+    }
+
+    const result = await pyRes.json();
+    res.json(result);
+  } catch (error) {
+    console.error('[Voice Upload Error]', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/voices', async (req, res) => {
+  try {
+    const pyRes = await fetch(`${CONFIG.pythonServiceUrl}/voices`);
     const result = await pyRes.json();
     res.json(result);
   } catch (error) {
@@ -58,31 +95,17 @@ app.post('/voices/:voiceName', upload.single('audio'), async (req, res) => {
   }
 });
 
-app.get('/voices', async (req, res) => {
-    const pyRes = await fetch(`${CONFIG.pythonServiceUrl}/voices`);
-    const result = await pyRes.json();
-    res.json(result);
-});
-
 app.delete('/voices/:voiceName', async (req, res) => {
+  try {
     const pyRes = await fetch(`${CONFIG.pythonServiceUrl}/voices/${req.params.voiceName}`, {
       method: 'DELETE',
     });
     const result = await pyRes.json();
     res.json(result);
-});
-  const url = `${CONFIG.pythonServiceUrl}${endpoint}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Python service error: ${res.status} ${err}`);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
-  return res;
-}
+});
 
 // ==================== TTS Endpoints ====================
 

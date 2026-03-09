@@ -70,9 +70,9 @@ if not exist "node_modules" (
 
 :: ====== Start services ======
 echo [OK] Starting services...
-echo [Note] First run will download Kokoro models (~300MB), please wait.
+echo [Note] First run may download F5-TTS / Whisper models, so Python 視窗短時間沒反應是正常的。
 
-start "Virtual Avatar - Python (8081)" python\venv\Scripts\python python\server.py
+start "Virtual Avatar - Python (8081)" python\venv\Scripts\python -u python\server.py
 timeout /t 3 /nobreak > nul
 start "Virtual Avatar - Node (8080)" node src/index.js
 
