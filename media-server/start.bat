@@ -104,12 +104,28 @@ where ffmpeg >nul 2>&1
 if errorlevel 1 (
     echo [Setup] FFmpeg not found, installing shared build...
     winget install -e --id Gyan.FFmpeg.Shared --silent --accept-package-agreements --accept-source-agreements
+    echo [Setup] Refreshing PATH after FFmpeg install...
+    for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%P"
 )
 
 where espeak-ng >nul 2>&1
 if errorlevel 1 (
-    echo [Setup] espeak-ng not found, installing...
-    winget install -e --id eSpeak.eSpeak-NG --silent --accept-package-agreements --accept-source-agreements
+    echo [Setup] espeak-ng not found, attempting install...
+    winget install -e --id eSpeak-NG.eSpeak-NG --silent --accept-package-agreements --accept-source-agreements
+    if errorlevel 1 (
+        echo [WARN] Automatic espeak-ng install failed. Continuing for now.
+    )
+    echo [Setup] Refreshing PATH after espeak-ng install...
+    for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%P"
+)
+
+echo [Setup] Verifying ffmpeg visibility...
+where ffmpeg
+if errorlevel 1 (
+    echo [ERROR] FFmpeg is still not visible in PATH after installation.
+    echo [ERROR] Please re-run start.bat once so the updated PATH can take effect.
+    pause
+    exit /b 1
 )
 
 echo [Setup] Installing TorchCodec...
