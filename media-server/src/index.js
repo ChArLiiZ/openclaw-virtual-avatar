@@ -37,8 +37,40 @@ const CONFIG = {
   live2dModelPath: process.env.LIVE2D_MODEL_PATH || './models',
 };
 
-// Proxy helper to Python service
-async function proxyToPython(endpoint, body) {
+// Proxy voice endpoints
+app.post('/voices/:voiceName', upload.single('audio'), async (req, res) => {
+  try {
+    // 重新封裝上傳的檔案
+    const formData = new FormData();
+    formData.append('audio', new Blob([req.file.buffer]), req.file.originalname);
+    formData.append('ref_text', req.body.ref_text);
+    
+    const url = `${CONFIG.pythonServiceUrl}/voices/${req.params.voiceName}`;
+    const pyRes = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+    
+    const result = await pyRes.json();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/voices', async (req, res) => {
+    const pyRes = await fetch(`${CONFIG.pythonServiceUrl}/voices`);
+    const result = await pyRes.json();
+    res.json(result);
+});
+
+app.delete('/voices/:voiceName', async (req, res) => {
+    const pyRes = await fetch(`${CONFIG.pythonServiceUrl}/voices/${req.params.voiceName}`, {
+      method: 'DELETE',
+    });
+    const result = await pyRes.json();
+    res.json(result);
+});
   const url = `${CONFIG.pythonServiceUrl}${endpoint}`;
   const res = await fetch(url, {
     method: 'POST',
