@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Virtual Avatar - Python TTS/STT Service
-TTS: Kokoro (CUDA)
+TTS: kokoro-onnx (CUDA via onnxruntime-gpu)
 STT: faster-whisper (CUDA)
 
 Install:
@@ -32,75 +32,68 @@ _whisper = None
 def get_kokoro():
     global _kokoro
     if _kokoro is None:
-        from kokoro import KPipeline
-        # 'z' = Chinese (zh), 'j' = Japanese (ja), 'a' = English (en-us)
-        # We'll load Chinese by default; switch per request
-        _kokoro = {}
-        print("[TTS] Kokoro models will be loaded on first use")
+        from kokoro_onnx import Kokoro
+        model_path  = os.getenv("KOKORO_MODEL",  "kokoro-v1.0.onnx")
+        voices_path = os.getenv("KOKORO_VOICES", "voices-v1.0.bin")
+        print(f"[TTS] Loading kokoro-onnx: {model_path}")
+        _kokoro = Kokoro(model_path, voices_path)
+        print("[TTS] kokoro-onnx loaded")
     return _kokoro
-
-def get_pipeline(lang: str):
-    kokoro = get_kokoro()
-    if lang not in kokoro:
-        from kokoro import KPipeline
-        # 0.7.x 用 lang 參數
-        lang_code = {
-            "zh": "zh",
-            "ja": "ja",
-            "en": "en-us",
-        }.get(lang, "en-us")
-        print(f"[TTS] Loading Kokoro pipeline for lang={lang} (code={lang_code})")
-        kokoro[lang] = KPipeline(lang=lang_code)
-    return kokoro[lang]
 
 def get_whisper():
     global _whisper
     if _whisper is None:
         from faster_whisper import WhisperModel
-        # Use GPU if available
         model_size = os.getenv("WHISPER_MODEL", "base")
-        print(f"[STT] Loading faster-whisper model: {model_size}")
+        print(f"[STT] Loading faster-whisper: {model_size}")
         _whisper = WhisperModel(model_size, device="cuda", compute_type="float16")
         print("[STT] faster-whisper loaded on CUDA")
     return _whisper
 
 # ==================== TTS ====================
 
+# 語言代碼對照
+LANG_CODES = {
+    "zh": "z",   # 中文
+    "ja": "j",   # 日文
+    "en": "a",   # 英文 (美式)
+    "en-gb": "b", # 英文 (英式)
+}
+
+# 各語言推薦預設聲音
+DEFAULT_VOICES = {
+    "zh": "zf_xiaobei",
+    "ja": "jf_alpha",
+    "en": "af_heart",
+    "en-gb": "bf_emma",
+}
+
 class TTSRequest(BaseModel):
     input: str
-    voice: str = "zf_xiaobei"   # default: Chinese female
+    voice: str | None = None   # None = 使用語言預設聲音
     speed: float = 1.0
-    lang: str = "zh"             # zh / ja / en
+    lang: str = "zh"           # zh / ja / en / en-gb
 
 @app.post("/v1/audio/speech")
 async def text_to_speech(req: TTSRequest):
     try:
-        pipeline = get_pipeline(req.lang)
+        kokoro = get_kokoro()
         
-        print(f"[TTS] Generating: {req.input[:60]}... voice={req.voice}")
+        lang_code = LANG_CODES.get(req.lang, "a")
+        voice     = req.voice or DEFAULT_VOICES.get(req.lang, "af_heart")
         
-        audio_chunks = []
-        sample_rate = 24000
+        print(f"[TTS] lang={req.lang}({lang_code}) voice={voice} text={req.input[:60]}...")
         
-        generator = pipeline(
+        # kokoro-onnx API
+        samples, sample_rate = kokoro.create(
             req.input,
-            voice=req.voice,
+            voice=voice,
             speed=req.speed,
-            split_pattern=r'\n+'
+            lang=lang_code,
         )
         
-        for _, _, audio in generator:
-            if audio is not None:
-                audio_chunks.append(audio)
-        
-        if not audio_chunks:
-            raise HTTPException(status_code=500, detail="No audio generated")
-        
-        audio_data = np.concatenate(audio_chunks)
-        
-        # Write to WAV in memory
         buf = io.BytesIO()
-        sf.write(buf, audio_data, sample_rate, format='WAV')
+        sf.write(buf, samples, sample_rate, format="WAV")
         buf.seek(0)
         
         return StreamingResponse(
@@ -110,21 +103,20 @@ async def text_to_speech(req: TTSRequest):
         )
         
     except Exception as e:
+        print(f"[TTS Error] {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== STT ====================
 
 class STTRequest(BaseModel):
     audio_data: str | None = None   # base64 encoded audio
-    audio_url: str | None = None
     language: str | None = None
 
 @app.post("/v1/audio/transcriptions")
 async def speech_to_text(req: STTRequest):
+    tmp_path = None
     try:
         model = get_whisper()
-        
-        tmp_path = None
         
         if req.audio_data:
             audio_bytes = base64.b64decode(req.audio_data)
@@ -134,55 +126,47 @@ async def speech_to_text(req: STTRequest):
         else:
             raise HTTPException(status_code=400, detail="audio_data required")
         
-        print(f"[STT] Transcribing: {tmp_path}, lang={req.language or 'auto'}")
+        print(f"[STT] Transcribing lang={req.language or 'auto'}")
         
         segments, info = model.transcribe(
             tmp_path,
             language=req.language,
             beam_size=5
         )
-        
         text = " ".join(seg.text for seg in segments).strip()
         
-        return {
-            "text": text,
-            "language": info.language,
-            "duration": info.duration
-        }
+        return {"text": text, "language": info.language, "duration": info.duration}
         
     except HTTPException:
         raise
     except Exception as e:
+        print(f"[STT Error] {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
-# File upload endpoint for STT
 @app.post("/v1/audio/transcriptions/upload")
 async def speech_to_text_upload(
     file: UploadFile = File(...),
     language: str | None = None
 ):
+    tmp_path = None
     try:
         model = get_whisper()
-        
         contents = await file.read()
-        with tempfile.NamedTemporaryFile(suffix=Path(file.filename).suffix or ".wav", delete=False) as f:
+        suffix = Path(file.filename).suffix or ".wav"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
             f.write(contents)
             tmp_path = f.name
         
-        print(f"[STT] Transcribing uploaded file: {file.filename}, lang={language or 'auto'}")
-        
         segments, info = model.transcribe(tmp_path, language=language, beam_size=5)
         text = " ".join(seg.text for seg in segments).strip()
-        
         return {"text": text, "language": info.language}
-        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if os.path.exists(tmp_path):
+        if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
 # ==================== Health ====================
