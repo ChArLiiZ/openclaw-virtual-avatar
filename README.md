@@ -133,6 +133,8 @@ Current implementation includes:
 
 The current STT path is functional, but transcription quality for game voice lines and uncommon proper nouns still needs further tuning.
 
+The Python service now also supports idle model unload. By default, TTS / STT models are released after 300 seconds without requests (`MODEL_IDLE_SECONDS`, set `0` to disable).
+
 ---
 
 ## OpenClaw plugin

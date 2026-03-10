@@ -13,6 +13,9 @@ Run:
 
 import os
 import io
+import gc
+import time
+import threading
 import tempfile
 import base64
 import shutil
@@ -42,9 +45,60 @@ DEFAULT_REF_TEXT  = "Hello, this is a reference voice for F5-TTS."
 
 _f5tts   = None
 _whisper = None
+MODEL_IDLE_SECONDS = int(os.getenv("MODEL_IDLE_SECONDS", "300"))
+_last_request_ts = time.time()
+_model_lock = threading.Lock()
+
+
+def mark_model_activity():
+    global _last_request_ts
+    _last_request_ts = time.time()
+
+
+def unload_models(reason: str = "manual"):
+    global _f5tts, _whisper
+
+    released = []
+    with _model_lock:
+        if _f5tts is not None:
+            _f5tts = None
+            released.append("tts")
+        if _whisper is not None:
+            _whisper = None
+            released.append("stt")
+
+    gc.collect()
+
+    try:
+        import torch  # type: ignore
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    if released:
+        print(f"[Models] Unloaded ({', '.join(released)}) reason={reason}")
+
+
+def idle_unload_worker():
+    if MODEL_IDLE_SECONDS <= 0:
+        print("[Models] Idle auto-unload disabled")
+        return
+
+    print(f"[Models] Idle auto-unload enabled: {MODEL_IDLE_SECONDS}s")
+    while True:
+        time.sleep(min(30, max(5, MODEL_IDLE_SECONDS // 2 or 5)))
+        idle_for = time.time() - _last_request_ts
+        if idle_for < MODEL_IDLE_SECONDS:
+            continue
+        if _f5tts is None and _whisper is None:
+            continue
+        unload_models(reason=f"idle>{MODEL_IDLE_SECONDS}s")
+
 
 def get_f5tts():
     global _f5tts
+    mark_model_activity()
     if _f5tts is None:
         from f5_tts.api import F5TTS
         print("[TTS] Loading F5-TTS model (first load may take a moment)...")
@@ -52,8 +106,10 @@ def get_f5tts():
         print("[TTS] F5-TTS loaded")
     return _f5tts
 
+
 def get_whisper():
     global _whisper
+    mark_model_activity()
     if _whisper is None:
         from faster_whisper import WhisperModel
         model_size = os.getenv("WHISPER_MODEL", "medium")
@@ -86,6 +142,7 @@ def get_ref_audio_path(voice: str) -> tuple[str, str]:
 
 @app.post("/v1/audio/speech")
 async def text_to_speech(req: TTSRequest):
+    mark_model_activity()
     try:
         model = get_f5tts()
         ref_audio, ref_text = get_ref_audio_path(req.voice)
@@ -192,6 +249,7 @@ def preprocess_audio_for_stt(input_path: str) -> str:
 
 @app.post("/v1/audio/transcriptions")
 async def speech_to_text(req: STTRequest):
+    mark_model_activity()
     tmp_path = None
     processed_path = None
     try:
@@ -234,6 +292,7 @@ async def speech_to_text_upload(
     file: UploadFile = File(...),
     language: str | None = None,
 ):
+    mark_model_activity()
     tmp_path = None
     processed_path = None
     try:
@@ -268,7 +327,24 @@ async def speech_to_text_upload(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "python-tts-stt", "version": "0.2.0", "tts": "f5-tts"}
+    return {
+        "status": "ok",
+        "service": "python-tts-stt",
+        "version": "0.2.0",
+        "tts": "f5-tts",
+        "model_idle_seconds": MODEL_IDLE_SECONDS,
+        "models_loaded": {
+            "tts": _f5tts is not None,
+            "stt": _whisper is not None,
+        },
+    }
+
+
+@app.on_event("startup")
+def startup_event():
+    mark_model_activity()
+    thread = threading.Thread(target=idle_unload_worker, daemon=True)
+    thread.start()
 
 # ==================== Main ====================
 
