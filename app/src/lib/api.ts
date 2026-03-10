@@ -89,6 +89,49 @@ export async function sttUpload(baseUrl: string, file: File, language?: string):
   return res.json()
 }
 
+export type VoiceInfo = {
+  name: string
+  ref_text?: string
+}
+
+export async function fetchVoices(baseUrl: string): Promise<VoiceInfo[]> {
+  const res = await fetch(`${baseUrl}/voices`)
+  if (!res.ok) {
+    const error = await parseJsonSafe(res)
+    throw new Error(error?.error || error?.detail || `Failed to list voices: ${res.status}`)
+  }
+  const data = await res.json()
+  const names: string[] = data?.voices ?? []
+  return names.map((name) => ({ name }))
+}
+
+export async function uploadVoice(baseUrl: string, voiceName: string, audioFile: File, refText: string) {
+  const form = new FormData()
+  form.append('audio', audioFile)
+  form.append('ref_text', refText)
+
+  const res = await fetch(`${baseUrl}/voices/${encodeURIComponent(voiceName)}`, {
+    method: 'POST',
+    body: form,
+  })
+  if (!res.ok) {
+    const error = await parseJsonSafe(res)
+    throw new Error(error?.error || error?.detail || `Failed to upload voice: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function deleteVoice(baseUrl: string, voiceName: string) {
+  const res = await fetch(`${baseUrl}/voices/${encodeURIComponent(voiceName)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    const error = await parseJsonSafe(res)
+    throw new Error(error?.error || error?.detail || `Failed to delete voice: ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function openClawRespond(cfg: OpenClawConfig, input: string): Promise<string> {
   if (!cfg.gatewayUrl.trim()) {
     throw new Error('OpenClaw gateway URL is empty')

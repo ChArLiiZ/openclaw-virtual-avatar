@@ -11,8 +11,8 @@ fn ensure_window(app: &tauri::AppHandle, label: &str, title: &str, hash: &str, v
 
     builder = match label {
         "avatar" => builder
-            .inner_size(320.0, 520.0)
-            .min_inner_size(280.0, 420.0)
+            .inner_size(160.0, 160.0)
+            .min_inner_size(100.0, 100.0)
             .resizable(false)
             .decorations(false)
             .transparent(true)

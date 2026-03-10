@@ -4,7 +4,7 @@ import { ChatView } from '@/views/ChatView'
 import { RecordView } from '@/views/RecordView'
 import { SettingsView } from '@/views/SettingsView'
 import type { AvatarState, ChatMessage, ViewMode } from '@/types'
-import { fetchHealth, openClawRespond, sttUpload, ttsRequest, type HealthInfo } from '@/lib/api'
+import { deleteVoice, fetchHealth, fetchVoices, openClawRespond, sttUpload, ttsRequest, uploadVoice, type HealthInfo, type VoiceInfo } from '@/lib/api'
 import { currentWindowKind, hideAndFocusChat, hideCurrentWindow, showWindow } from '@/lib/windows'
 import { publishSttResult, sendChatMessage, setSharedDraft, subscribeBridge } from '@/lib/bridge'
 import { useMediaRecorder } from '@/lib/useMediaRecorder'
@@ -28,6 +28,9 @@ export default function App() {
   const [healthError, setHealthError] = useState<string | null>(null)
   const [loadingHealth, setLoadingHealth] = useState(false)
   const [currentAudioUrl, setCurrentAudioUrl] = useState<string | null>(null)
+  const [voices, setVoices] = useState<VoiceInfo[]>([])
+  const [voicesLoading, setVoicesLoading] = useState(false)
+  const [voicesError, setVoicesError] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'assistant', text: '早安。接下來會改成真正的多視窗桌面角色。' },
     { role: 'assistant', text: '這裡會保留簡單對話，不塞太多工程控制。' },
@@ -80,8 +83,38 @@ export default function App() {
     }
   }
 
+  async function refreshVoices() {
+    setVoicesLoading(true)
+    setVoicesError(null)
+    try {
+      const list = await fetchVoices(serverUrl)
+      setVoices(list)
+    } catch (error) {
+      setVoicesError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setVoicesLoading(false)
+    }
+  }
+
+  async function handleUploadVoice(name: string, audioFile: File, refText: string) {
+    await uploadVoice(serverUrl, name, audioFile, refText)
+    await refreshVoices()
+    setVoice(name)
+  }
+
+  async function handleDeleteVoice(name: string) {
+    await deleteVoice(serverUrl, name)
+    await refreshVoices()
+    if (voice === name) {
+      setVoice('')
+    }
+  }
+
   useEffect(() => {
-    if (view === 'settings') void refreshHealth()
+    if (view === 'settings') {
+      void refreshHealth()
+      void refreshVoices()
+    }
   }, [serverUrl, pythonUrl, view])
 
   async function playBlob(blob: Blob) {
@@ -280,6 +313,9 @@ export default function App() {
       gatewayAgentId={gatewayAgentId}
       gatewayUser={gatewayUser}
       voice={voice}
+      voices={voices}
+      voicesLoading={voicesLoading}
+      voicesError={voicesError}
       text={ttsText}
       transcript={draft}
       avatarState={avatarState}
@@ -288,6 +324,7 @@ export default function App() {
       loadingHealth={loadingHealth}
       healthError={healthError}
       onRefreshHealth={() => void refreshHealth()}
+      onRefreshVoices={() => void refreshVoices()}
       onServerUrlChange={setServerUrl}
       onPythonUrlChange={setPythonUrl}
       onGatewayUrlChange={setGatewayUrl}
@@ -295,6 +332,8 @@ export default function App() {
       onGatewayAgentIdChange={setGatewayAgentId}
       onGatewayUserChange={setGatewayUser}
       onVoiceChange={setVoice}
+      onUploadVoice={handleUploadVoice}
+      onDeleteVoice={handleDeleteVoice}
       onTextChange={setTtsText}
       onTranscriptChange={updateDraft}
       onGenerateSpeech={() => void handleSend(ttsText)}

@@ -36,6 +36,10 @@ __pycache__/
 *.pyo
 .python-version
 
+# Voice reference data (user-specific, may contain large audio files)
+media-server/python/data/voices/*/ref.wav
+media-server/python/data/voices/*/ref.txt
+
 # TypeScript
 *.tsbuildinfo
 

@@ -1,4 +1,5 @@
-import { AudioLines, Bot, Cable, Mic, Play, RefreshCw, Settings2, Sparkles, Waves } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { AudioLines, Bot, Cable, Check, Mic, Plus, RefreshCw, Settings2, Sparkles, Trash2, Upload, Waves } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -7,7 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Progress } from '@/components/ui/progress'
 import type { AvatarState } from '@/types'
-import type { HealthInfo } from '@/lib/api'
+import type { HealthInfo, VoiceInfo } from '@/lib/api'
 
 function StatusDot({ ok }: { ok: boolean }) {
   return <span className={`inline-block size-2.5 rounded-full ${ok ? 'bg-green-400' : 'bg-yellow-400'}`} />
@@ -25,6 +26,152 @@ function SectionTitle({ icon: Icon, title, desc }: { icon: typeof Sparkles; titl
   )
 }
 
+function VoiceList({
+  voices,
+  active,
+  onSelect,
+  onDelete,
+}: {
+  voices: VoiceInfo[]
+  active: string
+  onSelect: (name: string) => void
+  onDelete: (name: string) => Promise<void>
+}) {
+  const [deleting, setDeleting] = useState<string | null>(null)
+
+  async function handleDelete(name: string) {
+    setDeleting(name)
+    try {
+      await onDelete(name)
+    } finally {
+      setDeleting(null)
+    }
+  }
+
+  if (!voices.length) {
+    return <div className="rounded-xl border border-border/50 bg-background/30 px-4 py-3 text-sm text-muted-foreground">No voices found. Upload one below.</div>
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {voices.map((v) => {
+        const isActive = v.name === active
+        return (
+          <div
+            key={v.name}
+            className={`group flex items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-colors cursor-pointer ${
+              isActive
+                ? 'border-primary/50 bg-primary/10 text-foreground'
+                : 'border-border/50 bg-background/30 text-muted-foreground hover:border-border hover:bg-background/50'
+            }`}
+            onClick={() => onSelect(v.name)}
+          >
+            {isActive && <Check className="size-3.5 shrink-0 text-primary" />}
+            <span className="flex-1 truncate font-medium">{v.name}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400"
+              onClick={(e) => {
+                e.stopPropagation()
+                void handleDelete(v.name)
+              }}
+              disabled={deleting === v.name}
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function VoiceUploadForm({ onUpload }: { onUpload: (name: string, audioFile: File, refText: string) => Promise<void> }) {
+  const [expanded, setExpanded] = useState(false)
+  const [name, setName] = useState('')
+  const [refText, setRefText] = useState('')
+  const [audioFile, setAudioFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  async function handleSubmit() {
+    if (!name.trim() || !audioFile || !refText.trim()) return
+    setUploading(true)
+    setError(null)
+    try {
+      await onUpload(name.trim(), audioFile, refText.trim())
+      setName('')
+      setRefText('')
+      setAudioFile(null)
+      setExpanded(false)
+      if (fileRef.current) fileRef.current.value = ''
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  if (!expanded) {
+    return (
+      <Button variant="outline" size="sm" className="w-full" onClick={() => setExpanded(true)}>
+        <Plus className="size-4" /> Add new voice
+      </Button>
+    )
+  }
+
+  return (
+    <div className="space-y-3 rounded-xl border border-border/70 bg-background/30 p-3">
+      <div className="text-sm font-medium">Upload new voice</div>
+      <div className="space-y-2">
+        <Label htmlFor="newVoiceName" className="text-xs">Voice name</Label>
+        <Input id="newVoiceName" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. vivian" className="h-8 text-sm" />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="refAudio" className="text-xs">Reference audio (.wav)</Label>
+        <div className="flex gap-2">
+          <input
+            ref={fileRef}
+            id="refAudio"
+            type="file"
+            accept="audio/*"
+            className="hidden"
+            onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)}
+          />
+          <Button variant="outline" size="sm" className="h-8 flex-1 text-xs" onClick={() => fileRef.current?.click()}>
+            <Upload className="size-3.5" /> {audioFile ? audioFile.name : 'Choose audio file'}
+          </Button>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="refText" className="text-xs">Reference text (transcription of the audio)</Label>
+        <Textarea
+          id="refText"
+          value={refText}
+          onChange={(e) => setRefText(e.target.value)}
+          placeholder="Type the exact transcription of the reference audio..."
+          className="min-h-[60px] text-sm"
+        />
+      </div>
+      {error && <div className="text-xs text-red-400">{error}</div>}
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          className="h-8 flex-1"
+          onClick={() => void handleSubmit()}
+          disabled={uploading || !name.trim() || !audioFile || !refText.trim()}
+        >
+          {uploading ? <RefreshCw className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
+          {uploading ? 'Uploading...' : 'Upload'}
+        </Button>
+        <Button variant="ghost" size="sm" className="h-8" onClick={() => setExpanded(false)}>Cancel</Button>
+      </div>
+    </div>
+  )
+}
+
 export function SettingsView({
   serverUrl,
   pythonUrl,
@@ -33,6 +180,9 @@ export function SettingsView({
   gatewayAgentId,
   gatewayUser,
   voice,
+  voices,
+  voicesLoading,
+  voicesError,
   text,
   transcript,
   avatarState,
@@ -41,6 +191,7 @@ export function SettingsView({
   loadingHealth,
   healthError,
   onRefreshHealth,
+  onRefreshVoices,
   onServerUrlChange,
   onPythonUrlChange,
   onGatewayUrlChange,
@@ -48,6 +199,8 @@ export function SettingsView({
   onGatewayAgentIdChange,
   onGatewayUserChange,
   onVoiceChange,
+  onUploadVoice,
+  onDeleteVoice,
   onTextChange,
   onTranscriptChange,
   onGenerateSpeech,
@@ -59,6 +212,9 @@ export function SettingsView({
   gatewayAgentId: string
   gatewayUser: string
   voice: string
+  voices: VoiceInfo[]
+  voicesLoading: boolean
+  voicesError: string | null
   text: string
   transcript: string
   avatarState: AvatarState
@@ -67,6 +223,7 @@ export function SettingsView({
   loadingHealth: boolean
   healthError: string | null
   onRefreshHealth: () => void
+  onRefreshVoices: () => void
   onServerUrlChange: (value: string) => void
   onPythonUrlChange: (value: string) => void
   onGatewayUrlChange: (value: string) => void
@@ -74,6 +231,8 @@ export function SettingsView({
   onGatewayAgentIdChange: (value: string) => void
   onGatewayUserChange: (value: string) => void
   onVoiceChange: (value: string) => void
+  onUploadVoice: (name: string, audioFile: File, refText: string) => Promise<void>
+  onDeleteVoice: (name: string) => Promise<void>
   onTextChange: (value: string) => void
   onTranscriptChange: (value: string) => void
   onGenerateSpeech: () => void
@@ -145,7 +304,7 @@ export function SettingsView({
           <div className="grid gap-6 lg:grid-cols-2">
             <Card>
               <CardHeader>
-                <SectionTitle icon={AudioLines} title="TTS / Voice settings" desc="之後用來管理預設 voice、TTS 測試、播放與雲端 / 本地 provider 切換。" />
+                <SectionTitle icon={AudioLines} title="TTS / Voice settings" desc="管理 TTS 參考音檔與聲音設定，支援上傳新聲音和試聽。" />
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -156,17 +315,29 @@ export function SettingsView({
                   <Label htmlFor="pythonUrl">Python service URL</Label>
                   <Input id="pythonUrl" value={pythonUrl} onChange={(e) => onPythonUrlChange(e.target.value)} />
                 </div>
+
+                {/* Voice selection */}
                 <div className="space-y-2">
-                  <Label htmlFor="voice">Voice</Label>
-                  <Input id="voice" value={voice} onChange={(e) => onVoiceChange(e.target.value)} />
+                  <div className="flex items-center justify-between">
+                    <Label>Active voice</Label>
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onRefreshVoices} disabled={voicesLoading}>
+                      <RefreshCw className={`size-3 ${voicesLoading ? 'animate-spin' : ''}`} /> Refresh
+                    </Button>
+                  </div>
+                  {voicesError && <div className="text-xs text-yellow-300">{voicesError}</div>}
+                  <VoiceList voices={voices} active={voice} onSelect={onVoiceChange} onDelete={onDeleteVoice} />
                 </div>
+
+                {/* Upload new voice */}
+                <VoiceUploadForm onUpload={onUploadVoice} />
+
+                {/* TTS test */}
                 <div className="space-y-2">
                   <Label htmlFor="ttsText">TTS test text</Label>
                   <Textarea id="ttsText" value={text} onChange={(e) => onTextChange(e.target.value)} />
                 </div>
                 <div className="flex flex-wrap gap-3">
-                  <Button onClick={onGenerateSpeech}><Sparkles className="size-4" /> Generate speech</Button>
-                  <Button variant="secondary"><Play className="size-4" /> Play result</Button>
+                  <Button onClick={onGenerateSpeech} disabled={!voice}><Sparkles className="size-4" /> Generate speech</Button>
                 </div>
               </CardContent>
             </Card>

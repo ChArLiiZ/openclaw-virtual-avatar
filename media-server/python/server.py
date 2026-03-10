@@ -12,6 +12,7 @@ Run:
 """
 
 import os
+import re
 import io
 import gc
 import time
@@ -20,6 +21,7 @@ import tempfile
 import base64
 import shutil
 import subprocess
+import numpy as np
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
@@ -140,33 +142,105 @@ def get_ref_audio_path(voice: str) -> tuple[str, str]:
     
     raise HTTPException(status_code=404, detail=f"Voice '{voice}' not found. Please upload a reference audio first.")
 
+# ── Sentence splitting for natural pauses ──
+
+# Punctuation that should produce a longer pause (sentence boundaries)
+_SENTENCE_RE = re.compile(r'(?<=[。！？!?\n])\s*')
+# Punctuation that should produce a shorter pause (clause boundaries)
+_CLAUSE_RE = re.compile(r'(?<=[，,、；;：:…—–])\s*')
+
+# Silence durations in seconds
+_SENTENCE_PAUSE = 0.45   # after 。！？
+_CLAUSE_PAUSE   = 0.20   # after ，、；：…
+
+def _split_sentences(text: str) -> list[tuple[str, float]]:
+    """Split text into segments with pause durations after each segment.
+
+    Returns a list of (segment_text, pause_seconds) tuples.
+    The last segment has 0 pause.
+    """
+    text = text.strip()
+    if not text:
+        return []
+
+    # First split on sentence-ending punctuation
+    sentences = _SENTENCE_RE.split(text)
+
+    result: list[tuple[str, float]] = []
+    for i, sentence in enumerate(sentences):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+
+        # Further split long sentences on clause punctuation
+        clauses = _CLAUSE_RE.split(sentence)
+        for j, clause in enumerate(clauses):
+            clause = clause.strip()
+            if not clause:
+                continue
+
+            # Determine pause: last clause of sentence gets sentence pause,
+            # mid-sentence clauses get clause pause, very last segment gets 0
+            is_last_overall = (i == len(sentences) - 1) and (j == len(clauses) - 1)
+            is_last_clause = (j == len(clauses) - 1)
+
+            if is_last_overall:
+                pause = 0.0
+            elif is_last_clause:
+                pause = _SENTENCE_PAUSE
+            else:
+                pause = _CLAUSE_PAUSE
+
+            result.append((clause, pause))
+
+    return result if result else [(text, 0.0)]
+
+
+def _make_silence(sr: int, seconds: float) -> np.ndarray:
+    """Create a silence array of the given duration."""
+    return np.zeros(int(sr * seconds), dtype=np.float32)
+
+
 @app.post("/v1/audio/speech")
 async def text_to_speech(req: TTSRequest):
     mark_model_activity()
     try:
         model = get_f5tts()
         ref_audio, ref_text = get_ref_audio_path(req.voice)
-        
-        print(f"[TTS] voice={req.voice} text={req.input[:60]}...")
-        
-        # F5-TTS 推理
-        wav, sr, _ = model.infer(
-            ref_file=ref_audio,
-            ref_text=ref_text,
-            gen_text=req.input,
-            speed=req.speed,
-        )
-        
+
+        segments = _split_sentences(req.input)
+        print(f"[TTS] voice={req.voice} segments={len(segments)} text={req.input[:60]}...")
+
+        audio_parts: list[np.ndarray] = []
+        sr_out = None
+
+        for seg_text, pause in segments:
+            wav, sr, _ = model.infer(
+                ref_file=ref_audio,
+                ref_text=ref_text,
+                gen_text=seg_text,
+                speed=req.speed,
+            )
+            sr_out = sr
+            audio_parts.append(wav)
+            if pause > 0:
+                audio_parts.append(_make_silence(sr, pause))
+
+        if not audio_parts or sr_out is None:
+            raise HTTPException(status_code=400, detail="No audio generated (empty input?)")
+
+        combined = np.concatenate(audio_parts)
+
         buf = io.BytesIO()
-        sf.write(buf, wav, sr, format="WAV")
+        sf.write(buf, combined, sr_out, format="WAV")
         buf.seek(0)
-        
+
         return StreamingResponse(
             buf,
             media_type="audio/wav",
             headers={"Content-Disposition": "attachment; filename=speech.wav"}
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
