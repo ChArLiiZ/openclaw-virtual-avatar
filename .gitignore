@@ -40,10 +40,14 @@ __pycache__/
 *.tsbuildinfo
 
 # Tauri / Rust
-src-tauri/target/
+app/src-tauri/target/
+app/src-tauri/gen/*
+app/src-tauri/Cargo.lock
 
 # Editor
 .vscode/
 .idea/
 *.swp
 *.swo
+
+*/.state/*
