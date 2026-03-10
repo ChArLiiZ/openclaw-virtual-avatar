@@ -44,7 +44,7 @@ openclaw-virtual-avatar/
 ├─ media-server/           # Local media service
 │  ├─ src/                 # Node.js proxy server
 │  ├─ python/              # Python FastAPI service
-│  ├─ environment.yml      # Conda environment definition
+│  ├─ environment.yml      # Conda environment definition (Python 3.12)
 │  └─ start.bat            # Windows one-click launcher
 ├─ README.md
 └─ .gitignore
@@ -71,7 +71,7 @@ start.bat
 ### What `start.bat` currently does
 
 - checks / installs **Miniforge (conda)**
-- creates or updates the conda environment
+- creates or updates the conda environment (**Python 3.12**)
 - installs Python dependencies
 - installs GPU PyTorch
 - installs `torchcodec`

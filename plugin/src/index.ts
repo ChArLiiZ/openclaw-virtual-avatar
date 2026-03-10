@@ -7,9 +7,15 @@ interface RemoteMediaConfig {
   defaultModel?: string;
 }
 
+const PLUGIN_ID = "openclaw-virtual-avatar";
+
 function getConfig(api: OpenClawPluginApi): RemoteMediaConfig {
-  const config = api.runtime.config.get("plugins.entries.remote-media");
-  return config as RemoteMediaConfig || { serverUrl: "" };
+  const config = api.runtime.config.get(`plugins.entries.${PLUGIN_ID}`);
+  return (config as RemoteMediaConfig) || { serverUrl: "" };
+}
+
+function getServerUrl(serverUrl: string, endpoint: string): string {
+  return `${serverUrl.replace(/\/$/, "")}${endpoint}`;
 }
 
 async function callMediaServer(
@@ -17,18 +23,35 @@ async function callMediaServer(
   endpoint: string,
   body: object
 ): Promise<any> {
-  const url = `${serverUrl.replace(/\/$/, "")}${endpoint}`;
-  const response = await fetch(url, {
+  const response = await fetch(getServerUrl(serverUrl, endpoint), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  
+
   if (!response.ok) {
     throw new Error(`Media server error: ${response.status} ${response.statusText}`);
   }
-  
+
   return response.json();
+}
+
+async function readBinaryAsBase64(response: Response): Promise<string> {
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return buffer.toString("base64");
+}
+
+async function resolveAudioData(audioUrl?: string): Promise<string | undefined> {
+  if (!audioUrl) {
+    return undefined;
+  }
+
+  const response = await fetch(audioUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch audioUrl: ${response.status} ${response.statusText}`);
+  }
+
+  return readBinaryAsBase64(response);
 }
 
 const remoteMediaPlugin = {
@@ -47,28 +70,43 @@ const remoteMediaPlugin = {
     // Tool: Remote TTS - Text to Speech
     api.registerTool({
       name: "remote_tts",
-      description: "Convert text to speech using local TTS engine (Kokoro). Returns audio file path or base64.",
+      description: "Convert text to speech using local TTS engine. Returns base64 audio plus metadata.",
       parameters: Type.Object({
         text: Type.String({ description: "Text to convert to speech" }),
         voice: Type.Optional(Type.String({ description: "Voice ID to use" })),
         speed: Type.Optional(Type.Number({ description: "Speech speed (0.5-2.0)", default: 1.0 })),
+        lang: Type.Optional(Type.String({ description: "Language code passed to media server", default: "zh" })),
       }),
       async execute(_id, params, ctx) {
         const config = getConfig(api);
-        
+
         try {
-          const result = await callMediaServer(
-            config.serverUrl,
-            "/v1/audio/speech",
-            {
+          const response = await fetch(getServerUrl(config.serverUrl, "/v1/audio/speech"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
               input: params.text,
-              voice: params.voice || config.defaultTtsVoice || "af_sarah",
+              voice: params.voice || config.defaultTtsVoice || "vivian",
               speed: params.speed || 1.0,
-            }
-          );
-          
+              lang: params.lang || "zh",
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error(`Media server error: ${response.status} ${response.statusText}`);
+          }
+
+          const contentType = response.headers.get("content-type") || "audio/wav";
+          const audioBase64 = await readBinaryAsBase64(response);
+
           return {
-            content: [{ type: "text", text: JSON.stringify(result) }],
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                contentType,
+                audioBase64,
+              }),
+            }],
           };
         } catch (error) {
           return {
@@ -90,18 +128,22 @@ const remoteMediaPlugin = {
       }),
       async execute(_id, params, ctx) {
         const config = getConfig(api);
-        
+
         try {
+          const audioData = params.audioData || await resolveAudioData(params.audioUrl);
+          if (!audioData) {
+            throw new Error("audioUrl or audioData is required");
+          }
+
           const result = await callMediaServer(
             config.serverUrl,
             "/v1/audio/transcriptions",
             {
-              audio_url: params.audioUrl,
-              audio_data: params.audioData,
+              audio_data: audioData,
               language: params.language,
             }
           );
-          
+
           return {
             content: [{ type: "text", text: result.text || result.texts?.[0] || "" }],
           };
