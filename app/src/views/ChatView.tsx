@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { LoaderCircle, MessageCircle, SendHorizonal, Settings2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -23,6 +24,20 @@ export function ChatView({
   onSend: () => void
   onClose: () => void
 }) {
+  // Escape key hides chat window (only when textarea is not focused)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Escape') {
+        const active = document.activeElement
+        if (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) return
+        e.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-4 px-4 py-5">
       <header className="flex items-center justify-between gap-3 rounded-[1.25rem] border border-border/70 bg-card/80 px-4 py-3 shadow-glow backdrop-blur">

@@ -1,63 +1,121 @@
-import { MessageCircle, Mic, Move, Settings, Sparkles } from 'lucide-react'
-import type { AvatarState } from '@/types'
+import { useCallback, useEffect, useState } from 'react'
+import { MessageCircle, Mic, Settings, Sparkles, X } from 'lucide-react'
+import type { AvatarState, RecordingStatus } from '@/types'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 
-const stateLabel: Record<AvatarState, string> = {
-  idle: 'Idle',
-  listening: 'Listening',
-  thinking: 'Thinking',
-  speaking: 'Speaking',
-  error: 'Error',
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-export function AvatarView({ state, onOpenChat, onStartVoice, onOpenSettings }: {
+export function AvatarView({
+  state,
+  recordingStatus,
+  recordingDuration,
+  onOpenChat,
+  onToggleRecording,
+  onCancelRecording,
+  onOpenSettings,
+}: {
   state: AvatarState
+  recordingStatus: RecordingStatus
+  recordingDuration: number
   onOpenChat: () => void
-  onStartVoice: () => void
+  onToggleRecording: () => void
+  onCancelRecording: () => void
   onOpenSettings: () => void
 }) {
+  const isRecording = recordingStatus === 'recording'
+  const isProcessing = recordingStatus === 'processing' || state === 'listening'
+  const [hovered, setHovered] = useState(false)
+
+  // Make body/html fully transparent so Tauri transparent window works
+  // (other windows keep their dark theme since each window is a separate webview)
+  useEffect(() => {
+    document.documentElement.style.background = 'transparent'
+    document.body.style.background = 'transparent'
+    document.body.style.backgroundImage = 'none'
+    return () => {
+      document.documentElement.style.background = ''
+      document.body.style.background = ''
+      document.body.style.backgroundImage = ''
+    }
+  }, [])
+
+  const onMouseEnter = useCallback(() => setHovered(true), [])
+  const onMouseLeave = useCallback(() => setHovered(false), [])
+
   return (
-    <main className="flex min-h-screen items-center justify-center overflow-hidden bg-transparent p-2">
-      <div className="group relative w-[280px] select-none">
-        <div className="absolute inset-x-8 bottom-8 h-20 rounded-full bg-primary/25 blur-3xl" />
-        <section className="relative overflow-hidden rounded-[2rem] border border-border/60 bg-card/55 p-4 shadow-glow backdrop-blur-xl">
-          <div className="absolute inset-0 bg-avatar-grid bg-[size:20px_20px] opacity-25" />
-          <div className="relative flex flex-col items-center gap-4">
-            <div data-tauri-drag-region className="flex w-full items-center justify-between rounded-xl border border-border/50 bg-background/35 px-3 py-2">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Move className="size-3.5" /> Drag me
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary">Avatar</Badge>
-                <Badge variant={state === 'speaking' ? 'success' : state === 'listening' ? 'warning' : state === 'error' ? 'warning' : 'outline'}>
-                  {stateLabel[state]}
-                </Badge>
-              </div>
+    <main className="flex min-h-screen select-none items-end justify-center bg-transparent pb-6">
+      <div
+        className="flex flex-col items-center gap-3"
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+      >
+        {/* Avatar icon — draggable, fades on hover */}
+        {!isRecording && !isProcessing && (
+          <div
+            data-tauri-drag-region
+            className={`flex h-16 w-16 cursor-move items-center justify-center rounded-full border border-primary/30 bg-card/70 text-primary shadow-glow backdrop-blur transition-opacity duration-200 ${
+              hovered ? 'opacity-30' : 'opacity-100'
+            }`}
+          >
+            <Sparkles className="size-7 pointer-events-none" />
+          </div>
+        )}
+
+        {/* Recording indicator */}
+        {isRecording && (
+          <div className="flex flex-col items-center gap-2">
+            <div className="relative flex h-16 w-16 items-center justify-center">
+              <div className="absolute inset-0 animate-ping rounded-full bg-red-500/30" />
+              <button
+                onClick={onToggleRecording}
+                className="relative flex h-16 w-16 items-center justify-center rounded-full bg-red-500/80 text-white shadow-lg backdrop-blur transition hover:bg-red-600"
+              >
+                <Mic className="size-7" />
+              </button>
             </div>
+            <div className="rounded-full bg-red-500/80 px-3 py-1 text-xs font-semibold text-white backdrop-blur">
+              {formatDuration(recordingDuration)}
+            </div>
+            <button
+              onClick={onCancelRecording}
+              className="flex items-center gap-1 rounded-full bg-background/70 px-3 py-1 text-xs text-muted-foreground backdrop-blur transition hover:bg-background/90"
+            >
+              <X className="size-3" /> Cancel
+            </button>
+          </div>
+        )}
 
-            <div className="relative flex h-[320px] w-full items-center justify-center rounded-[1.75rem] border border-primary/20 bg-gradient-to-b from-primary/15 via-background/15 to-background/5">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.12),_transparent_42%)]" />
-              <div className="relative flex h-56 w-56 items-center justify-center rounded-full border border-primary/30 bg-secondary/50">
-                <div className="text-center">
-                  <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-primary/20 text-primary">
-                    <Sparkles className="size-9" />
-                  </div>
-                  <div className="text-lg font-semibold">VRM / Live2D</div>
-                  <p className="mt-2 px-5 text-sm text-muted-foreground">平常就停在桌面上，滑鼠移上來再露出操作。頂部區域現在可以直接拖曳移動。</p>
-                </div>
-              </div>
-
-              <div className="pointer-events-none absolute inset-x-0 bottom-5 flex justify-center opacity-0 transition duration-200 group-hover:opacity-100">
-                <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-border/70 bg-background/85 p-2 shadow-glow backdrop-blur">
-                  <Button size="icon" onClick={onOpenChat} aria-label="Open chat"><MessageCircle className="size-4" /></Button>
-                  <Button size="icon" variant="secondary" onClick={onStartVoice} aria-label="Open record window"><Mic className="size-4" /></Button>
-                  <Button size="icon" variant="outline" onClick={onOpenSettings} aria-label="Open settings"><Settings className="size-4" /></Button>
-                </div>
-              </div>
+        {/* Processing indicator */}
+        {isProcessing && (
+          <div className="flex h-16 w-16 items-center justify-center rounded-full border border-yellow-500/40 bg-yellow-500/20 text-yellow-400 shadow-glow backdrop-blur">
+            <div className="animate-spin">
+              <Sparkles className="size-7" />
             </div>
           </div>
-        </section>
+        )}
+
+        {/* Action buttons — shown on hover, hidden during recording */}
+        {!isRecording && !isProcessing && (
+          <div
+            className={`flex items-center gap-2 rounded-full border border-border/70 bg-background/85 p-2 shadow-glow backdrop-blur transition-opacity duration-200 ${
+              hovered ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            }`}
+          >
+            <Button size="icon" onClick={onOpenChat} aria-label="Open chat">
+              <MessageCircle className="size-4" />
+            </Button>
+            <Button size="icon" variant="secondary" onClick={onToggleRecording} aria-label="Start recording">
+              <Mic className="size-4" />
+            </Button>
+            <Button size="icon" variant="outline" onClick={onOpenSettings} aria-label="Open settings">
+              <Settings className="size-4" />
+            </Button>
+          </div>
+        )}
       </div>
     </main>
   )

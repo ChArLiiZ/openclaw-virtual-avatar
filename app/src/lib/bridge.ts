@@ -13,8 +13,11 @@ function dispatch(payload: BridgePayload) {
     at: Date.now(),
     payload,
   }
+  // Only use localStorage — the `storage` event fires in OTHER windows.
+  // Same-window state is already updated directly by the caller (appendMessage, setDraft, etc.)
+  // Previously we also dispatched a CustomEvent for same-window notification,
+  // but that caused duplicates since the caller already updates local state.
   localStorage.setItem(STORAGE_KEY, JSON.stringify(packet))
-  window.dispatchEvent(new CustomEvent(STORAGE_KEY, { detail: packet }))
 }
 
 export function sendChatMessage(message: ChatMessage) {
@@ -32,31 +35,20 @@ export function publishSttResult(text: string) {
 export function subscribeBridge(listener: (payload: BridgePayload) => void) {
   const seen = new Set<string>()
 
-  const handlePacket = (packet: any) => {
-    if (!packet?.id || seen.has(packet.id)) return
-    seen.add(packet.id)
-    listener(packet.payload as BridgePayload)
-  }
-
   const onStorage = (event: StorageEvent) => {
     if (event.key !== STORAGE_KEY || !event.newValue) return
     try {
-      handlePacket(JSON.parse(event.newValue))
+      const packet = JSON.parse(event.newValue)
+      if (!packet?.id || seen.has(packet.id)) return
+      seen.add(packet.id)
+      listener(packet.payload as BridgePayload)
     } catch {
       // ignore malformed packet
     }
   }
 
-  const onCustom = (event: Event) => {
-    const custom = event as CustomEvent
-    handlePacket(custom.detail)
-  }
-
+  // Only listen to `storage` events (fired in OTHER windows).
+  // Same-window state is updated directly by callers, no CustomEvent needed.
   window.addEventListener('storage', onStorage)
-  window.addEventListener(STORAGE_KEY, onCustom as EventListener)
-
-  return () => {
-    window.removeEventListener('storage', onStorage)
-    window.removeEventListener(STORAGE_KEY, onCustom as EventListener)
-  }
+  return () => window.removeEventListener('storage', onStorage)
 }

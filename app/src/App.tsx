@@ -5,8 +5,9 @@ import { RecordView } from '@/views/RecordView'
 import { SettingsView } from '@/views/SettingsView'
 import type { AvatarState, ChatMessage, ViewMode } from '@/types'
 import { fetchHealth, openClawRespond, sttUpload, ttsRequest, type HealthInfo } from '@/lib/api'
-import { currentWindowKind, focusWindow, hideCurrentWindow, showWindow } from '@/lib/windows'
+import { currentWindowKind, hideAndFocusChat, hideCurrentWindow, showWindow } from '@/lib/windows'
 import { publishSttResult, sendChatMessage, setSharedDraft, subscribeBridge } from '@/lib/bridge'
+import { useMediaRecorder } from '@/lib/useMediaRecorder'
 
 export default function App() {
   const initialView = useMemo<ViewMode>(() => currentWindowKind(), [])
@@ -34,6 +35,7 @@ export default function App() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const mic = useMediaRecorder()
 
   const appendMessage = (message: ChatMessage, sync = true) => {
     setMessages((prev) => [...prev, message])
@@ -146,14 +148,61 @@ export default function App() {
       publishSttResult(text)
       appendMessage({ role: 'user', text: text || '(empty STT result)' })
       setAvatarState('idle')
-      await focusWindow('chat')
+      if (view === 'record') {
+        await hideAndFocusChat()
+      } else {
+        await showWindow('chat')
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setAvatarState('error')
       appendMessage({ role: 'system', text: `STT failed: ${message}` })
-      await focusWindow('chat')
+      if (view === 'record') {
+        await hideAndFocusChat()
+      } else {
+        await showWindow('chat')
+      }
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function handleMicStop() {
+    const file = await mic.stopRecording()
+    if (file) await handleAudioFile(file)
+  }
+
+  /** Avatar recording: STT → auto-send to dialogue (no draft step) */
+  async function handleAutoSend(file: File) {
+    setBusy(true)
+    setAvatarState('listening')
+    try {
+      const result = await sttUpload(serverUrl, file, 'zh')
+      const text = (result.text || '').trim()
+      if (!text) {
+        setAvatarState('idle')
+        return
+      }
+      // Show chat and auto-send the transcribed text
+      await showWindow('chat')
+      await handleSend(text)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setAvatarState('error')
+      appendMessage({ role: 'system', text: `STT failed: ${message}` })
+      await showWindow('chat')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Toggle recording from avatar: start or stop + auto-send */
+  async function toggleAvatarRecording() {
+    if (mic.status === 'recording') {
+      const file = await mic.stopRecording()
+      if (file) await handleAutoSend(file)
+    } else if (mic.status === 'idle') {
+      await mic.startRecording()
     }
   }
 
@@ -178,8 +227,11 @@ export default function App() {
     return (
       <AvatarView
         state={avatarState}
+        recordingStatus={mic.status}
+        recordingDuration={mic.duration}
         onOpenChat={() => void showWindow('chat')}
-        onStartVoice={() => void showWindow('record')}
+        onToggleRecording={() => void toggleAvatarRecording()}
+        onCancelRecording={mic.cancelRecording}
         onOpenSettings={() => void showWindow('settings')}
       />
     )
@@ -187,12 +239,20 @@ export default function App() {
 
   if (view === 'record') {
     return (
-      <RecordView
-        state={avatarState}
-        busy={busy}
-        onPickAudio={() => fileInputRef.current?.click()}
-        onClose={() => void hideCurrentWindow()}
-      />
+      <>
+        <input ref={fileInputRef} type="file" accept="audio/*" className="hidden" />
+        <RecordView
+          state={avatarState}
+          busy={busy}
+          recordingStatus={mic.status}
+          recordingDuration={mic.duration}
+          onPickAudio={() => fileInputRef.current?.click()}
+          onStartRecording={() => void mic.startRecording()}
+          onStopRecording={() => void handleMicStop()}
+          onCancelRecording={mic.cancelRecording}
+          onClose={() => void hideCurrentWindow()}
+        />
+      </>
     )
   }
 

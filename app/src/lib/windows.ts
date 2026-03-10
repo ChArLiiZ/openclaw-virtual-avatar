@@ -15,6 +15,16 @@ export function currentWindowKind(): WindowKind {
   return 'avatar'
 }
 
+/** Re-assert avatar window always-on-top (call after showing other windows) */
+export async function ensureAvatarOnTop() {
+  try {
+    const avatar = await WebviewWindow.getByLabel('avatar')
+    if (avatar) await avatar.setAlwaysOnTop(true)
+  } catch {
+    // avatar window may not exist yet
+  }
+}
+
 export async function showWindow(kind: WindowKind) {
   const label = labels[kind]
   try {
@@ -27,12 +37,14 @@ export async function showWindow(kind: WindowKind) {
         await win.unminimize()
         await win.setFocus()
       })
+      if (kind !== 'avatar') await ensureAvatarOnTop()
       return win
     }
 
     await existing.show()
     await existing.unminimize()
     await existing.setFocus()
+    if (kind !== 'avatar') await ensureAvatarOnTop()
     return existing
   } catch (error) {
     console.error(`[windows] failed to open window: ${kind}`, error)
@@ -63,6 +75,22 @@ export async function closeCurrentWindow() {
 export async function hideCurrentWindow() {
   const current = getCurrentWebviewWindow()
   await current.hide()
+}
+
+/** Hide current window and bring chat to front */
+export async function hideAndFocusChat() {
+  await hideCurrentWindow()
+  await showWindow('chat')
+}
+
+/** Toggle click-through on the current window (for avatar transparency) */
+export async function setClickThrough(ignore: boolean) {
+  try {
+    const current = getCurrentWebviewWindow()
+    await current.setIgnoreCursorEvents(ignore)
+  } catch {
+    // API may not be available
+  }
 }
 
 export async function currentWindowLabel() {
