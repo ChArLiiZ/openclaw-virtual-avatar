@@ -40,6 +40,7 @@ Local Windows PC
 
 ```text
 openclaw-virtual-avatar/
+├─ app/                    # Tauri-ready desktop UI (React + Vite + shadcn/ui)
 ├─ plugin/                 # OpenClaw plugin
 ├─ media-server/           # Local media service
 │  ├─ src/                 # Node.js proxy server
@@ -62,11 +63,13 @@ openclaw-virtual-avatar/
 
 ### Start
 
-From `media-server/`, run:
+From the repo root or from `media-server/`, run:
 
 ```bat
 start.bat
 ```
+
+The root `start.bat` simply forwards to `media-server\start.bat`, which remains the main Windows launcher.
 
 ### What `start.bat` currently does
 
@@ -75,8 +78,12 @@ start.bat
 - force-reinstalls Python dependencies for the active interpreter
 - installs GPU PyTorch
 - installs `torchcodec`
+- installs `media-server/` Node dependencies
+- installs `app/` dependencies when needed
+- attempts to install the Rust toolchain for Tauri on Windows when missing
 - starts the Python service
 - starts the Node.js proxy server
+- starts the Tauri desktop window (`app/`) when the toolchain is available
 
 ---
 
@@ -170,12 +177,45 @@ The plugin is still in development and is not yet packaged as a final installabl
 
 - continue improving faster-whisper quality
 - clean up plugin config and loading workflow
-- start a minimal Tauri desktop UI
+- connect the new `app/` MVP to real media-server APIs
 - add local audio playback flow in the desktop app
 - continue Live2D / VRM integration
 - prepare voice management UI for future desktop builds
 
 ---
+
+## Desktop UI MVP
+
+A first Tauri-ready UI shell now lives in `app/`.
+
+Current stack:
+- React + Vite + TypeScript
+- Tailwind CSS
+- shadcn/ui-style component structure (`components.json`, `src/components/ui/*`)
+
+Current first-pass screens include:
+- service status cards
+- TTS console
+- speech input / transcript area
+- placeholder Avatar Stage for future Live2D / VRM integration
+
+Run it locally in browser-only mode:
+
+```bash
+cd app
+npm install
+npm run dev
+```
+
+Run it as a Tauri desktop app:
+
+```bash
+cd app
+npm install
+npm run tauri:dev
+```
+
+On Windows, the project launcher is intended to do this for you via `start.bat`.
 
 ## Notes
 

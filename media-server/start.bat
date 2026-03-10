@@ -1,12 +1,13 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title Virtual Avatar Media Server
+title Virtual Avatar Launcher
 cd /d "%~dp0"
 
 echo [Virtual Avatar] Checking conda-based environment...
 
 set "ENV_NAME=openclaw-virtual-avatar"
 set "ENV_FILE=%CD%\environment.yml"
+set "APP_DIR=%CD%\..\app"
 set "CONDA_EXE="
 set "CONDA_ROOT="
 
@@ -155,13 +156,48 @@ if errorlevel 1 (
 
 :: ====== Node.js setup ======
 if not exist "node_modules" (
-    echo [Setup] Installing Node.js dependencies...
+    echo [Setup] Installing media-server Node.js dependencies...
     call npm install --silent
     if errorlevel 1 (
-        echo [ERROR] npm install failed.
+        echo [ERROR] media-server npm install failed.
         pause
         exit /b 1
     )
+)
+
+if exist "%APP_DIR%\package.json" (
+    if not exist "%APP_DIR%\node_modules" (
+        echo [Setup] Installing desktop app dependencies...
+        pushd "%APP_DIR%"
+        call npm install --silent
+        if errorlevel 1 (
+            echo [ERROR] app npm install failed.
+            popd
+            pause
+            exit /b 1
+        )
+        popd
+    )
+) else (
+    echo [WARN] app\package.json not found. Desktop UI will be skipped.
+)
+
+:: ====== Optional Rust / Tauri toolchain ======
+set "TAURI_READY="
+where cargo >nul 2>&1
+if errorlevel 1 (
+    echo [Setup] Rust toolchain not found, attempting install via winget...
+    winget install -e --id Rustlang.Rustup --silent --accept-package-agreements --accept-source-agreements
+    if errorlevel 1 (
+        echo [WARN] Automatic Rust install failed. Tauri window will be skipped for this run.
+    ) else (
+        call "%UserProfile%\.cargo\env.bat" >nul 2>&1
+    )
+)
+
+where cargo >nul 2>&1
+if not errorlevel 1 (
+    set "TAURI_READY=1"
 )
 
 :: ====== Start services ======
@@ -170,16 +206,28 @@ echo [Note] First run may download F5-TTS / Whisper models, so Python 視窗短�
 
 start "Virtual Avatar - Python (8081)" cmd /k "call "%CONDA_EXE%" run -n "%ENV_NAME%" python -u python\server.py"
 timeout /t 3 /nobreak > nul
-start "Virtual Avatar - Node (8080)" node src/index.js
+start "Virtual Avatar - Node (8080)" cmd /k "node src/index.js"
+
+if defined TAURI_READY if exist "%APP_DIR%\package.json" (
+    timeout /t 2 /nobreak > nul
+    start "Virtual Avatar - Desktop UI" cmd /k "cd /d "%APP_DIR%" && npm run tauri:dev"
+) else (
+    echo [WARN] Rust/Tauri not ready yet. Skipping desktop window launch.
+)
 
 echo.
 echo  Virtual Avatar is running!
 echo   Node   ^> http://localhost:8080
 echo   Python ^> http://localhost:8081
+if defined TAURI_READY (
+    echo   Desktop^> Tauri window launch requested
+) else (
+    echo   Desktop^> skipped ^(Rust / Tauri toolchain missing^)
+)
 
 echo  Conda env ^> %ENV_NAME%
 echo.
-echo  Close both windows to stop the services.
+echo  Close all opened windows to stop the services.
 exit /b 0
 
 :conda_fail
