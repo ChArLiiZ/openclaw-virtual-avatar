@@ -4,9 +4,10 @@ OpenClaw 的虛擬角色系統專案，整合了：
 
 - **OpenClaw plugin**（部署於 VPS）
 - **Local media server**（部署於本地 Windows 電腦）
+- **Tauri desktop app**（桌面角色入口）
 - **TTS / STT / Live2D / VRM** 的本地推理與控制基礎
 
-目前專案仍在開發中。
+目前專案仍在開發中，但本地媒體鏈路與桌面殼已經有可運作的第一版。
 
 ---
 
@@ -22,7 +23,12 @@ Local Windows PC
        ├─ Python service (FastAPI)
        │   ├─ F5-TTS
        │   └─ faster-whisper
-       └─ Node.js proxy server
+       ├─ Node.js proxy server
+       └─ Tauri desktop app
+            ├─ Avatar window
+            ├─ Chat window
+            ├─ Record window
+            └─ Settings window
 ```
 
 ### Current stack
@@ -31,7 +37,8 @@ Local Windows PC
 - **Voice cloning**: supported
 - **STT**: faster-whisper
 - **Transport**: Tailscale
-- **Desktop app target**: Tauri
+- **Desktop app**: Tauri + React + Vite + shadcn/ui-style structure
+- **Dialogue target**: OpenClaw Gateway `/v1/responses`
 - **Avatar layer**: Live2D / VRM integration in progress
 
 ---
@@ -40,28 +47,21 @@ Local Windows PC
 
 ```text
 openclaw-virtual-avatar/
-├─ app/                    # Tauri-ready desktop UI (React + Vite + shadcn/ui)
+├─ app/                    # Tauri desktop UI (React + Vite + shadcn/ui style)
 ├─ plugin/                 # OpenClaw plugin
 ├─ media-server/           # Local media service
 │  ├─ src/                 # Node.js proxy server
 │  ├─ python/              # Python FastAPI service
-│  ├─ environment.yml      # Conda environment definition (Python 3.13)
+│  ├─ environment.yml      # Conda environment definition (Python 3.12)
 │  └─ start.bat            # Windows one-click launcher
+├─ start.bat               # Root launcher, forwards to media-server/start.bat
 ├─ README.md
 └─ .gitignore
 ```
 
 ---
 
-## media-server
-
-`media-server` handles local heavy workloads, including:
-
-- text-to-speech
-- speech-to-text
-- future avatar playback / model control
-
-### Start
+## Windows launcher
 
 From the repo root or from `media-server/`, run:
 
@@ -83,8 +83,10 @@ The root `start.bat` simply forwards to `media-server\start.bat`, which remains 
 - attempts to install the Rust toolchain for Tauri on Windows when missing
 - starts the Python service
 - starts the Node.js proxy server
-- starts the Tauri desktop window (`app/`) when the toolchain is available
+- starts the Tauri desktop app (`app/`) when the toolchain is available
 - stores dependency hashes under `media-server/.state/` to avoid repeating expensive setup on every launch
+
+The current launcher behavior is optimized for repeat use on Windows: after the first successful setup, `start.bat` should usually skip most installs unless dependency files changed or runtime verification detects a broken environment.
 
 ---
 
@@ -111,6 +113,23 @@ The root `start.bat` simply forwards to `media-server\start.bat`, which remains 
 - `POST /live2d/express`
 - `POST /live2d/load`
 - `GET /live2d/frame`
+
+### OpenClaw Gateway (optional dialogue backend)
+
+The desktop app is now being wired toward:
+
+- `POST /v1/responses`
+
+When a Gateway URL is configured in the desktop app, the intended flow becomes:
+
+```text
+Chat input / STT result
+  → OpenClaw Gateway /v1/responses
+  → assistant text
+  → local TTS playback
+```
+
+This endpoint must be enabled on the Gateway side and authenticated according to your OpenClaw config.
 
 ---
 
@@ -141,7 +160,7 @@ Current implementation includes:
 
 The current STT path is functional, but transcription quality for game voice lines and uncommon proper nouns still needs further tuning.
 
-The Python service now also supports idle model unload. By default, TTS / STT models are released after 300 seconds without requests (`MODEL_IDLE_SECONDS`, set `0` to disable).
+The Python service also supports idle model unload. By default, TTS / STT models are released after 300 seconds without requests (`MODEL_IDLE_SECONDS`, set `0` to disable).
 
 ---
 
@@ -161,46 +180,63 @@ The plugin is still in development and is not yet packaged as a final installabl
 
 ---
 
-## Current status
+## Desktop app status
 
-### Done
+A Tauri desktop app now lives in `app/`.
 
-- integrated plugin + media-server into a single git project
-- F5-TTS voice cloning flow working end-to-end
-- local voice upload / storage / reuse flow working
-- Python + Node dual-service startup working
-- conda-based Windows launcher working
-- TTS generation tested successfully
-- Python STT and Node proxy STT both working
-- lightweight STT preprocessing added
+### Current UI direction
 
-### Next
+The desktop UX is moving toward a multi-window assistant layout:
 
-- continue improving faster-whisper quality
-- clean up plugin config and loading workflow
-- connect the new `app/` MVP to real media-server APIs
-- add local audio playback flow in the desktop app
-- continue Live2D / VRM integration
-- prepare voice management UI for future desktop builds
+- **Avatar Window**
+  - small desktop-style character window
+  - transparent / undecorated / always-on-top direction
+  - hover actions to open other windows
+- **Chat Window**
+  - lightweight dialogue window
+  - text input + message history
+- **Record Window**
+  - lightweight STT / recording entry window
+  - currently focused on audio upload → Whisper STT → route back to chat
+- **Settings Window**
+  - larger control center
+  - server URLs, voice settings, OpenClaw Gateway settings, health/debug information
+
+### Current implementation progress
+
+Implemented so far:
+
+- multi-window routing via:
+  - `#avatar`
+  - `#chat`
+  - `#record`
+  - `#settings`
+- Tauri startup creates four windows:
+  - `avatar`
+  - `chat`
+  - `record`
+  - `settings`
+- Avatar / Chat / Record / Settings views are split into separate React views
+- cross-window bridge exists for:
+  - shared draft sync
+  - chat message sync
+  - STT result handoff from Record → Chat
+- Chat send flow can now target OpenClaw Gateway `/v1/responses`
+- assistant reply can then be sent to local TTS for playback
+- Chat / Record / Settings window close behavior is being normalized toward **hide instead of destroy**
+
+### Not done yet
+
+- full Windows-side validation of all Tauri window focus / hide / close behavior
+- complete OpenClaw Gateway integration verification against a real enabled `/v1/responses` endpoint
+- realtime microphone / push-to-talk flow
+- VRM / Live2D renderer integration in the Avatar window
 
 ---
 
-## Desktop UI MVP
+## Local development
 
-A first Tauri-ready UI shell now lives in `app/`.
-
-Current stack:
-- React + Vite + TypeScript
-- Tailwind CSS
-- shadcn/ui-style component structure (`components.json`, `src/components/ui/*`)
-
-Current first-pass screens include:
-- service status cards
-- TTS console
-- speech input / transcript area
-- placeholder Avatar Stage for future Live2D / VRM integration
-
-Run it locally in browser-only mode:
+### Browser-only frontend
 
 ```bash
 cd app
@@ -208,7 +244,7 @@ npm install
 npm run dev
 ```
 
-Run it as a Tauri desktop app:
+### Tauri desktop app
 
 ```bash
 cd app
@@ -216,7 +252,37 @@ npm install
 npm run tauri:dev
 ```
 
-On Windows, the project launcher is intended to do this for you via `start.bat`.
+### Full Windows flow
+
+Use the project `start.bat` and let the launcher bring up the local stack for you.
+
+---
+
+## Current status summary
+
+### Working now
+
+- integrated plugin + media-server into a single git project
+- conda-first Windows launcher working
+- dependency change detection in launcher working
+- F5-TTS voice cloning flow working end-to-end
+- local voice upload / storage / reuse flow working
+- Python + Node dual-service startup working
+- Python STT and Node proxy STT both working
+- lightweight STT preprocessing added
+- first Tauri desktop shell running on Windows
+- multi-window architecture scaffold in progress
+
+### Next priorities
+
+- continue improving multi-window behavior on Windows
+- finish routing STT / Chat / OpenClaw / TTS into a smoother assistant loop
+- continue improving faster-whisper quality
+- clean up plugin config and loading workflow
+- continue Live2D / VRM integration
+- prepare voice management UI for later builds
+
+---
 
 ## Notes
 
@@ -226,8 +292,6 @@ This project currently targets:
 - **local media inference on Windows**
 
 Before productization, the launcher flow, environment packaging, desktop UX, and model management will continue to evolve.
-
-Current launcher behavior is optimized for repeat use on Windows: after the first successful setup, `start.bat` should usually skip most installs unless dependency files changed or runtime verification detects a broken environment.
 
 ---
 

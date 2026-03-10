@@ -1,4 +1,4 @@
-export type ViewMode = 'avatar' | 'chat' | 'settings'
+export type ViewMode = 'avatar' | 'chat' | 'record' | 'settings'
 export type AvatarState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'error'
 
 export type ChatMessage = {

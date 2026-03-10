@@ -1,18 +1,23 @@
-import { useEffect, useRef, useState } from 'react'
-import { LayoutPanelTop, MessageCircle, Mic, Settings2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AvatarView } from '@/views/AvatarView'
 import { ChatView } from '@/views/ChatView'
+import { RecordView } from '@/views/RecordView'
 import { SettingsView } from '@/views/SettingsView'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import type { AvatarState, ChatMessage, ViewMode } from '@/types'
-import { fetchHealth, sttUpload, ttsRequest, type HealthInfo } from '@/lib/api'
+import { fetchHealth, openClawRespond, sttUpload, ttsRequest, type HealthInfo } from '@/lib/api'
+import { currentWindowKind, focusWindow, hideCurrentWindow, showWindow } from '@/lib/windows'
+import { publishSttResult, sendChatMessage, setSharedDraft, subscribeBridge } from '@/lib/bridge'
 
 export default function App() {
-  const [view, setView] = useState<ViewMode>('avatar')
+  const initialView = useMemo<ViewMode>(() => currentWindowKind(), [])
+  const [view] = useState<ViewMode>(initialView)
   const [avatarState, setAvatarState] = useState<AvatarState>('idle')
   const [serverUrl, setServerUrl] = useState('http://100.113.172.86:8080')
   const [pythonUrl, setPythonUrl] = useState('http://100.113.172.86:8081')
+  const [gatewayUrl, setGatewayUrl] = useState('')
+  const [gatewayToken, setGatewayToken] = useState('')
+  const [gatewayAgentId, setGatewayAgentId] = useState('main')
+  const [gatewayUser, setGatewayUser] = useState('virtual-avatar-desktop')
   const [voice, setVoice] = useState('vivian')
   const [ttsText, setTtsText] = useState('您好，我是薇薇安。這裡之後會是桌面角色的設定中心。')
   const [draft, setDraft] = useState('')
@@ -22,16 +27,30 @@ export default function App() {
   const [healthError, setHealthError] = useState<string | null>(null)
   const [loadingHealth, setLoadingHealth] = useState(false)
   const [currentAudioUrl, setCurrentAudioUrl] = useState<string | null>(null)
-  const [currentAudioLabel, setCurrentAudioLabel] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'assistant', text: '早安。現在已經拆成 Avatar / Chat / Settings 三個視圖了。' },
-    { role: 'assistant', text: '下一步是把這條互動回路接到真實 TTS / STT。' },
+    { role: 'assistant', text: '早安。接下來會改成真正的多視窗桌面角色。' },
+    { role: 'assistant', text: '這裡會保留簡單對話，不塞太多工程控制。' },
   ])
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const appendMessage = (message: ChatMessage) => setMessages((prev) => [...prev, message])
+  const appendMessage = (message: ChatMessage, sync = true) => {
+    setMessages((prev) => [...prev, message])
+    if (sync) sendChatMessage(message)
+  }
+
+  useEffect(() => {
+    const stop = subscribeBridge((event) => {
+      if (event.type === 'chat-message') {
+        setMessages((prev) => [...prev, event.message])
+      }
+      if (event.type === 'draft-set' || event.type === 'stt-result') {
+        setDraft(event.text)
+      }
+    })
+    return stop
+  }, [])
 
   useEffect(() => {
     audioRef.current = new Audio()
@@ -60,27 +79,23 @@ export default function App() {
   }
 
   useEffect(() => {
-    void refreshHealth()
-  }, [serverUrl, pythonUrl])
+    if (view === 'settings') void refreshHealth()
+  }, [serverUrl, pythonUrl, view])
 
-  const openChat = () => setView('chat')
-  const openSettings = () => setView('settings')
-  const startVoice = () => {
-    setAvatarState('listening')
-    setView('chat')
-    fileInputRef.current?.click()
-  }
-
-  async function playBlob(blob: Blob, label: string) {
+  async function playBlob(blob: Blob) {
     if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl)
     const url = URL.createObjectURL(blob)
     setCurrentAudioUrl(url)
-    setCurrentAudioLabel(label)
     if (audioRef.current) {
       audioRef.current.src = url
       setAvatarState('speaking')
       await audioRef.current.play()
     }
+  }
+
+  async function synthesizeAssistant(text: string) {
+    const blob = await ttsRequest(serverUrl, { input: text, voice, lang: 'zh' })
+    await playBlob(blob)
   }
 
   async function handleSend(sourceText?: string) {
@@ -90,15 +105,31 @@ export default function App() {
     appendMessage({ role: 'user', text })
     setBusy(true)
     setAvatarState('thinking')
+
     try {
-      const blob = await ttsRequest(serverUrl, { input: text, voice, lang: 'zh' })
-      appendMessage({ role: 'assistant', text: `已生成語音：${text}` })
-      await playBlob(blob, `tts-${Date.now()}.wav`)
-      if (!sourceText) setDraft('')
+      const assistantText = gatewayUrl.trim()
+        ? await openClawRespond(
+            {
+              gatewayUrl,
+              token: gatewayToken,
+              agentId: gatewayAgentId,
+              user: gatewayUser,
+            },
+            text,
+          )
+        : text
+
+      appendMessage({ role: 'assistant', text: assistantText })
+      await synthesizeAssistant(assistantText)
+
+      if (!sourceText) {
+        setDraft('')
+        setSharedDraft('')
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setAvatarState('error')
-      appendMessage({ role: 'system', text: `TTS failed: ${message}` })
+      appendMessage({ role: 'system', text: `Dialogue failed: ${message}` })
     } finally {
       setBusy(false)
     }
@@ -109,13 +140,18 @@ export default function App() {
     setAvatarState('listening')
     try {
       const result = await sttUpload(serverUrl, file, 'zh')
-      setDraft(result.text)
-      appendMessage({ role: 'system', text: `STT: ${result.text || '(empty result)'}` })
+      const text = result.text || ''
+      setDraft(text)
+      setSharedDraft(text)
+      publishSttResult(text)
+      appendMessage({ role: 'user', text: text || '(empty STT result)' })
       setAvatarState('idle')
+      await focusWindow('chat')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setAvatarState('error')
       appendMessage({ role: 'system', text: `STT failed: ${message}` })
+      await focusWindow('chat')
     } finally {
       setBusy(false)
     }
@@ -133,72 +169,75 @@ export default function App() {
     return () => input.removeEventListener('change', onChange)
   }, [serverUrl])
 
-  async function replayAudio() {
-    if (!audioRef.current || !currentAudioUrl) return
-    audioRef.current.currentTime = 0
-    setAvatarState('speaking')
-    await audioRef.current.play()
+  function updateDraft(value: string) {
+    setDraft(value)
+    setSharedDraft(value)
+  }
+
+  if (view === 'avatar') {
+    return (
+      <AvatarView
+        state={avatarState}
+        onOpenChat={() => void showWindow('chat')}
+        onStartVoice={() => void showWindow('record')}
+        onOpenSettings={() => void showWindow('settings')}
+      />
+    )
+  }
+
+  if (view === 'record') {
+    return (
+      <RecordView
+        state={avatarState}
+        busy={busy}
+        onPickAudio={() => fileInputRef.current?.click()}
+        onClose={() => void hideCurrentWindow()}
+      />
+    )
+  }
+
+  if (view === 'chat') {
+    return (
+      <ChatView
+        state={avatarState}
+        draft={draft}
+        messages={messages}
+        busy={busy}
+        onDraftChange={updateDraft}
+        onOpenSettings={() => void showWindow('settings')}
+        onSend={() => void handleSend()}
+        onClose={() => void hideCurrentWindow()}
+      />
+    )
   }
 
   return (
-    <div className="relative min-h-screen">
-      <nav className="fixed left-1/2 top-5 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border/70 bg-background/80 p-2 shadow-glow backdrop-blur-xl">
-        <Badge variant="secondary" className="hidden sm:inline-flex">Phase 1-4 prototype</Badge>
-        <Button size="sm" variant={view === 'avatar' ? 'default' : 'ghost'} onClick={() => setView('avatar')}>
-          <LayoutPanelTop className="size-4" /> Avatar
-        </Button>
-        <Button size="sm" variant={view === 'chat' ? 'default' : 'ghost'} onClick={() => setView('chat')}>
-          <MessageCircle className="size-4" /> Chat
-        </Button>
-        <Button size="sm" variant={view === 'settings' ? 'default' : 'ghost'} onClick={() => setView('settings')}>
-          <Settings2 className="size-4" /> Settings
-        </Button>
-        <Button size="sm" variant="outline" onClick={startVoice} disabled={busy}>
-          <Mic className="size-4" /> Voice
-        </Button>
-      </nav>
-
-      {view === 'avatar' && (
-        <AvatarView state={avatarState} onOpenChat={openChat} onStartVoice={startVoice} onOpenSettings={openSettings} />
-      )}
-
-      {view === 'chat' && (
-        <ChatView
-          state={avatarState}
-          draft={draft}
-          messages={messages}
-          busy={busy}
-          currentAudioLabel={currentAudioLabel}
-          onDraftChange={setDraft}
-          onOpenSettings={openSettings}
-          onSend={() => void handleSend()}
-          onPickAudio={() => fileInputRef.current?.click()}
-          onReplay={() => void replayAudio()}
-          fileInputRef={fileInputRef}
-        />
-      )}
-
-      {view === 'settings' && (
-        <SettingsView
-          serverUrl={serverUrl}
-          pythonUrl={pythonUrl}
-          voice={voice}
-          text={ttsText}
-          transcript={draft}
-          avatarState={avatarState}
-          nodeHealth={nodeHealth}
-          pythonHealth={pythonHealth}
-          loadingHealth={loadingHealth}
-          healthError={healthError}
-          onRefreshHealth={() => void refreshHealth()}
-          onServerUrlChange={setServerUrl}
-          onPythonUrlChange={setPythonUrl}
-          onVoiceChange={setVoice}
-          onTextChange={setTtsText}
-          onTranscriptChange={setDraft}
-          onGenerateSpeech={() => void handleSend(ttsText)}
-        />
-      )}
-    </div>
+    <SettingsView
+      serverUrl={serverUrl}
+      pythonUrl={pythonUrl}
+      gatewayUrl={gatewayUrl}
+      gatewayToken={gatewayToken}
+      gatewayAgentId={gatewayAgentId}
+      gatewayUser={gatewayUser}
+      voice={voice}
+      text={ttsText}
+      transcript={draft}
+      avatarState={avatarState}
+      nodeHealth={nodeHealth}
+      pythonHealth={pythonHealth}
+      loadingHealth={loadingHealth}
+      healthError={healthError}
+      onRefreshHealth={() => void refreshHealth()}
+      onServerUrlChange={setServerUrl}
+      onPythonUrlChange={setPythonUrl}
+      onGatewayUrlChange={setGatewayUrl}
+      onGatewayTokenChange={setGatewayToken}
+      onGatewayAgentIdChange={setGatewayAgentId}
+      onGatewayUserChange={setGatewayUser}
+      onVoiceChange={setVoice}
+      onTextChange={setTtsText}
+      onTranscriptChange={updateDraft}
+      onGenerateSpeech={() => void handleSend(ttsText)}
+    />
   )
 }

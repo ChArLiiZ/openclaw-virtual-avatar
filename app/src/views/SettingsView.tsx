@@ -28,6 +28,10 @@ function SectionTitle({ icon: Icon, title, desc }: { icon: typeof Sparkles; titl
 export function SettingsView({
   serverUrl,
   pythonUrl,
+  gatewayUrl,
+  gatewayToken,
+  gatewayAgentId,
+  gatewayUser,
   voice,
   text,
   transcript,
@@ -39,6 +43,10 @@ export function SettingsView({
   onRefreshHealth,
   onServerUrlChange,
   onPythonUrlChange,
+  onGatewayUrlChange,
+  onGatewayTokenChange,
+  onGatewayAgentIdChange,
+  onGatewayUserChange,
   onVoiceChange,
   onTextChange,
   onTranscriptChange,
@@ -46,6 +54,10 @@ export function SettingsView({
 }: {
   serverUrl: string
   pythonUrl: string
+  gatewayUrl: string
+  gatewayToken: string
+  gatewayAgentId: string
+  gatewayUser: string
   voice: string
   text: string
   transcript: string
@@ -57,6 +69,10 @@ export function SettingsView({
   onRefreshHealth: () => void
   onServerUrlChange: (value: string) => void
   onPythonUrlChange: (value: string) => void
+  onGatewayUrlChange: (value: string) => void
+  onGatewayTokenChange: (value: string) => void
+  onGatewayAgentIdChange: (value: string) => void
+  onGatewayUserChange: (value: string) => void
   onVoiceChange: (value: string) => void
   onTextChange: (value: string) => void
   onTranscriptChange: (value: string) => void
@@ -175,6 +191,31 @@ export function SettingsView({
               </CardContent>
             </Card>
           </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-xl"><Bot className="size-5 text-primary" /> OpenClaw dialogue</CardTitle>
+              <CardDescription>把桌面聊天窗真的接進 OpenClaw Gateway。建議使用 `/v1/responses`，agent 預設為 `main`。</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="gatewayUrl">Gateway URL</Label>
+                <Input id="gatewayUrl" value={gatewayUrl} onChange={(e) => onGatewayUrlChange(e.target.value)} placeholder="http://127.0.0.1:18789" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="gatewayToken">Gateway token / password</Label>
+                <Input id="gatewayToken" value={gatewayToken} onChange={(e) => onGatewayTokenChange(e.target.value)} placeholder="optional if local auth allows" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="gatewayAgent">Agent ID</Label>
+                <Input id="gatewayAgent" value={gatewayAgentId} onChange={(e) => onGatewayAgentIdChange(e.target.value)} placeholder="main" />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="gatewayUser">Session user key</Label>
+                <Input id="gatewayUser" value={gatewayUser} onChange={(e) => onGatewayUserChange(e.target.value)} placeholder="virtual-avatar-desktop" />
+              </div>
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader>
