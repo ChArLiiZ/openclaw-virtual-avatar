@@ -74,16 +74,17 @@ The root `start.bat` simply forwards to `media-server\start.bat`, which remains 
 ### What `start.bat` currently does
 
 - checks / installs **Miniforge (conda)**
-- creates or updates the conda environment (**Python 3.13**)
-- force-reinstalls Python dependencies for the active interpreter
-- installs GPU PyTorch
-- installs `torchcodec`
-- installs `media-server/` Node dependencies
-- installs `app/` dependencies when needed
+- creates the conda environment on first run
+- updates the conda environment only when `environment.yml` changes
+- installs Python requirements only when `python/requirements.txt` changes or import verification fails
+- repairs GPU PyTorch only when verification fails
+- installs `torchcodec` only when verification fails
+- installs `media-server/` and `app/` Node dependencies only when lockfiles change or `node_modules` is missing
 - attempts to install the Rust toolchain for Tauri on Windows when missing
 - starts the Python service
 - starts the Node.js proxy server
 - starts the Tauri desktop window (`app/`) when the toolchain is available
+- stores dependency hashes under `media-server/.state/` to avoid repeating expensive setup on every launch
 
 ---
 
@@ -225,6 +226,8 @@ This project currently targets:
 - **local media inference on Windows**
 
 Before productization, the launcher flow, environment packaging, desktop UX, and model management will continue to evolve.
+
+Current launcher behavior is optimized for repeat use on Windows: after the first successful setup, `start.bat` should usually skip most installs unless dependency files changed or runtime verification detects a broken environment.
 
 ---
 

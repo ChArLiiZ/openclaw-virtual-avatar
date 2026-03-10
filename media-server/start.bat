@@ -3,13 +3,21 @@ setlocal EnableExtensions EnableDelayedExpansion
 title Virtual Avatar Launcher
 cd /d "%~dp0"
 
-echo [Virtual Avatar] Checking conda-based environment...
+echo [Virtual Avatar] Checking environment...
 
 set "ENV_NAME=openclaw-virtual-avatar"
 set "ENV_FILE=%CD%\environment.yml"
+set "PY_REQ=%CD%\python\requirements.txt"
 set "APP_DIR=%CD%\..\app"
+set "STATE_DIR=%CD%\.state"
 set "CONDA_EXE="
 set "CONDA_ROOT="
+set "TAURI_READY="
+
+if not exist "%STATE_DIR%" mkdir "%STATE_DIR%" >nul 2>&1
+
+:: ====== helpers ======
+set "PS_HASH_CMD=$p=$env:TARGET_FILE; if (Test-Path $p) {(Get-FileHash -Algorithm SHA256 $p).Hash }"
 
 :: ====== Ensure Conda / Miniforge ======
 where conda >nul 2>&1
@@ -53,7 +61,7 @@ exit /b 1
 
 :conda_found
 for %%D in ("%CONDA_EXE%") do set "CONDA_ROOT=%%~dpD.."
-set "CONDA_ROOT=%CONDA_ROOT:\\=\%"
+set "CONDA_ROOT=%CONDA_ROOT:\=\%"
 
 echo [Virtual Avatar] Using conda: %CONDA_EXE%
 
@@ -70,120 +78,129 @@ if errorlevel 1 (
     )
 )
 
-:: ====== Create / update Conda env ======
+:: ====== Create / update Conda env only when needed ======
 if not exist "%ENV_FILE%" (
     echo [ERROR] environment.yml not found: %ENV_FILE%
     pause
     exit /b 1
 )
 
-echo [Setup] Ensuring conda environment "%ENV_NAME%"...
+set "ENV_EXISTS="
 call "%CONDA_EXE%" env list | findstr /R /C:"^%ENV_NAME% " >nul 2>&1
-if errorlevel 1 (
+if not errorlevel 1 set "ENV_EXISTS=1"
+
+if not defined ENV_EXISTS (
     echo [Setup] Creating conda environment from environment.yml...
     call "%CONDA_EXE%" env create -f "%ENV_FILE%"
     if errorlevel 1 goto :conda_fail
+    call :update_hash "%ENV_FILE%" "%STATE_DIR%\environment.sha256"
 ) else (
-    echo [Setup] Updating conda environment from environment.yml...
-    call "%CONDA_EXE%" env update -n "%ENV_NAME%" -f "%ENV_FILE%" --prune
-    if errorlevel 1 goto :conda_fail
-)
-
-:: ====== Refresh Python packages for current interpreter ======
-echo [Setup] Force-reinstalling Python packages for the current conda interpreter...
-call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip install --no-cache-dir --force-reinstall -r python\requirements.txt
-if errorlevel 1 (
-    echo [ERROR] Failed to reinstall Python requirements inside conda env.
-    pause
-    exit /b 1
-)
-
-call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import sys, fastapi, pydantic, pydantic_core; print('[Python]', sys.version); print('[FastAPI]', fastapi.__version__); print('[Pydantic]', pydantic.__version__); print('[Pydantic Core]', pydantic_core.__version__)"
-if errorlevel 1 (
-    echo [ERROR] Python package verification failed inside conda env.
-    pause
-    exit /b 1
-)
-
-:: ====== GPU stack inside Conda env ======
-echo [Setup] Installing GPU PyTorch inside conda env...
-call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip uninstall -y torch torchaudio torchvision torchcodec >nul 2>&1
-set TORCH_OK=
-for %%I in (
-    https://download.pytorch.org/whl/cu128
-    https://download.pytorch.org/whl/cu126
-    https://download.pytorch.org/whl/cu124
-    https://download.pytorch.org/whl/cu121
-) do (
-    if not defined TORCH_OK (
-        echo [Setup] Trying PyTorch index: %%I
-        call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip install -q --no-cache-dir --force-reinstall torch torchaudio torchvision --index-url %%I
-        if not errorlevel 1 (
-            call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import sys, torch; print('[Torch]', torch.__version__); print('[CUDA]', torch.version.cuda); ok=torch.cuda.is_available() and '+cpu' not in torch.__version__; sys.exit(0 if ok else 1)"
-            if not errorlevel 1 (
-                set TORCH_OK=1
-                set TORCH_INDEX=%%I
-            ) else (
-                echo [Setup] Installed torch is not a usable GPU build, retrying...
-                call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip uninstall -y torch torchaudio torchvision torchcodec >nul 2>&1
-            )
-        )
+    call :hash_changed "%ENV_FILE%" "%STATE_DIR%\environment.sha256"
+    if errorlevel 1 (
+        echo [Setup] environment.yml changed. Updating conda environment...
+        call "%CONDA_EXE%" env update -n "%ENV_NAME%" -f "%ENV_FILE%" --prune
+        if errorlevel 1 goto :conda_fail
+        call :update_hash "%ENV_FILE%" "%STATE_DIR%\environment.sha256"
+    ) else (
+        echo [Setup] Conda environment unchanged. Skipping env update.
     )
 )
 
-if not defined TORCH_OK (
-    echo [ERROR] Failed to install a usable GPU PyTorch build automatically.
-    pause
-    exit /b 1
-)
+:: ====== Python packages: update when requirements change or verification fails ======
+set "NEED_PIP_INSTALL="
+call :hash_changed "%PY_REQ%" "%STATE_DIR%\python-requirements.sha256"
+if errorlevel 1 set "NEED_PIP_INSTALL=1"
 
-echo [Setup] Selected PyTorch index: %TORCH_INDEX%
+call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import sys, fastapi, pydantic, pydantic_core; print('[Python]', sys.version); print('[FastAPI]', fastapi.__version__); print('[Pydantic]', pydantic.__version__); print('[Pydantic Core]', pydantic_core.__version__)"
+if errorlevel 1 set "NEED_PIP_INSTALL=1"
 
-echo [Setup] Installing TorchCodec in conda env...
-call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip install -q --no-cache-dir --force-reinstall torchcodec
-if errorlevel 1 (
-    echo [ERROR] Failed to install torchcodec in conda env.
-    pause
-    exit /b 1
-)
-
-call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import torch, torchcodec; print('[TorchCodec] OK'); print('[Torch]', torch.__version__); print('[CUDA available]', torch.cuda.is_available())"
-if errorlevel 1 (
-    echo [ERROR] TorchCodec verification failed inside conda env.
-    pause
-    exit /b 1
-)
-
-:: ====== Node.js setup ======
-if not exist "node_modules" (
-    echo [Setup] Installing media-server Node.js dependencies...
-    call npm install --silent
+if defined NEED_PIP_INSTALL (
+    echo [Setup] Installing Python requirements inside conda env...
+    call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip install --no-cache-dir -r python\requirements.txt
     if errorlevel 1 (
-        echo [ERROR] media-server npm install failed.
+        echo [ERROR] Failed to install Python requirements inside conda env.
         pause
         exit /b 1
     )
+    call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import fastapi, pydantic, pydantic_core"
+    if errorlevel 1 (
+        echo [ERROR] Python package verification failed after install.
+        pause
+        exit /b 1
+    )
+    call :update_hash "%PY_REQ%" "%STATE_DIR%\python-requirements.sha256"
+) else (
+    echo [Setup] Python requirements unchanged. Skipping pip install.
 )
 
-if exist "%APP_DIR%\package.json" (
-    if not exist "%APP_DIR%\node_modules" (
-        echo [Setup] Installing desktop app dependencies...
-        pushd "%APP_DIR%"
-        call npm install --silent
-        if errorlevel 1 (
-            echo [ERROR] app npm install failed.
-            popd
-            pause
-            exit /b 1
+:: ====== GPU stack: verify first, repair only if needed ======
+call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import sys, torch; ok=torch.cuda.is_available() and '+cpu' not in torch.__version__; print('[Torch]', torch.__version__); print('[CUDA]', torch.version.cuda); sys.exit(0 if ok else 1)"
+if errorlevel 1 (
+    echo [Setup] GPU PyTorch missing or unusable. Repairing torch stack...
+    call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip uninstall -y torch torchaudio torchvision torchcodec >nul 2>&1
+    set TORCH_OK=
+    for %%I in (
+        https://download.pytorch.org/whl/cu128
+        https://download.pytorch.org/whl/cu126
+        https://download.pytorch.org/whl/cu124
+        https://download.pytorch.org/whl/cu121
+    ) do (
+        if not defined TORCH_OK (
+            echo [Setup] Trying PyTorch index: %%I
+            call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip install -q --no-cache-dir torch torchaudio torchvision --index-url %%I
+            if not errorlevel 1 (
+                call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import sys, torch; ok=torch.cuda.is_available() and '+cpu' not in torch.__version__; print('[Torch]', torch.__version__); print('[CUDA]', torch.version.cuda); sys.exit(0 if ok else 1)"
+                if not errorlevel 1 (
+                    set TORCH_OK=1
+                    set TORCH_INDEX=%%I
+                ) else (
+                    echo [Setup] Installed torch is not a usable GPU build, retrying...
+                    call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip uninstall -y torch torchaudio torchvision torchcodec >nul 2>&1
+                )
+            )
         )
-        popd
     )
+    if not defined TORCH_OK (
+        echo [ERROR] Failed to install a usable GPU PyTorch build automatically.
+        pause
+        exit /b 1
+    )
+    echo [Setup] Selected PyTorch index: %TORCH_INDEX%
+) else (
+    echo [Setup] GPU PyTorch looks healthy. Skipping reinstall.
+)
+
+call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import torch, torchcodec; print('[TorchCodec] OK'); print('[CUDA available]', torch.cuda.is_available())"
+if errorlevel 1 (
+    echo [Setup] TorchCodec missing or broken. Installing torchcodec...
+    call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip install -q --no-cache-dir torchcodec
+    if errorlevel 1 (
+        echo [ERROR] Failed to install torchcodec in conda env.
+        pause
+        exit /b 1
+    )
+    call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import torch, torchcodec"
+    if errorlevel 1 (
+        echo [ERROR] TorchCodec verification failed inside conda env.
+        pause
+        exit /b 1
+    )
+) else (
+    echo [Setup] TorchCodec looks healthy. Skipping reinstall.
+)
+
+:: ====== Node.js setup: update when lockfiles change ======
+call :npm_sync "%CD%" "%CD%\package-lock.json" "media-server"
+if errorlevel 1 exit /b 1
+
+if exist "%APP_DIR%\package.json" (
+    call :npm_sync "%APP_DIR%" "%APP_DIR%\package-lock.json" "desktop app"
+    if errorlevel 1 exit /b 1
 ) else (
     echo [WARN] app\package.json not found. Desktop UI will be skipped.
 )
 
 :: ====== Optional Rust / Tauri toolchain ======
-set "TAURI_READY="
 where cargo >nul 2>&1
 if errorlevel 1 (
     echo [Setup] Rust toolchain not found, attempting install via winget...
@@ -196,9 +213,7 @@ if errorlevel 1 (
 )
 
 where cargo >nul 2>&1
-if not errorlevel 1 (
-    set "TAURI_READY=1"
-)
+if not errorlevel 1 set "TAURI_READY=1"
 
 :: ====== Start services ======
 echo [OK] Starting services...
@@ -224,10 +239,63 @@ if defined TAURI_READY (
 ) else (
     echo   Desktop^> skipped ^(Rust / Tauri toolchain missing^)
 )
-
 echo  Conda env ^> %ENV_NAME%
 echo.
 echo  Close all opened windows to stop the services.
+exit /b 0
+
+:npm_sync
+set "NPM_DIR=%~1"
+set "NPM_LOCK=%~2"
+set "NPM_LABEL=%~3"
+set "NPM_STATE=%STATE_DIR%\%NPM_LABEL: =-%-package-lock.sha256"
+set "NPM_NEEDS="
+
+if not exist "%NPM_DIR%\node_modules" set "NPM_NEEDS=1"
+call :hash_changed "%NPM_LOCK%" "%NPM_STATE%"
+if errorlevel 1 set "NPM_NEEDS=1"
+
+if defined NPM_NEEDS (
+    echo [Setup] Installing %NPM_LABEL% dependencies...
+    pushd "%NPM_DIR%"
+    call npm install --silent
+    set "NPM_RC=!errorlevel!"
+    popd
+    if not "!NPM_RC!"=="0" (
+        echo [ERROR] %NPM_LABEL% npm install failed.
+        pause
+        exit /b 1
+    )
+    call :update_hash "%NPM_LOCK%" "%NPM_STATE%"
+) else (
+    echo [Setup] %NPM_LABEL% dependencies unchanged. Skipping npm install.
+)
+exit /b 0
+
+:hash_changed
+set "TARGET_FILE=%~1"
+set "HASH_FILE=%~2"
+set "CURRENT_HASH="
+set "STORED_HASH="
+if not exist "%TARGET_FILE%" exit /b 1
+for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "%PS_HASH_CMD%"`) do set "CURRENT_HASH=%%H"
+if not defined CURRENT_HASH exit /b 1
+if not exist "%HASH_FILE%" exit /b 1
+set /p STORED_HASH=<"%HASH_FILE%"
+if /I "%CURRENT_HASH%"=="%STORED_HASH%" (
+    exit /b 0
+) else (
+    exit /b 1
+)
+
+:update_hash
+set "TARGET_FILE=%~1"
+set "HASH_FILE=%~2"
+set "NEW_HASH="
+if not exist "%TARGET_FILE%" exit /b 1
+for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "%PS_HASH_CMD%"`) do set "NEW_HASH=%%H"
+if not defined NEW_HASH exit /b 1
+echo %NEW_HASH%>"%HASH_FILE%"
 exit /b 0
 
 :conda_fail
