@@ -88,6 +88,22 @@ if errorlevel 1 (
     if errorlevel 1 goto :conda_fail
 )
 
+:: ====== Refresh Python packages for current interpreter ======
+echo [Setup] Force-reinstalling Python packages for the current conda interpreter...
+call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip install --no-cache-dir --force-reinstall -r python\requirements.txt
+if errorlevel 1 (
+    echo [ERROR] Failed to reinstall Python requirements inside conda env.
+    pause
+    exit /b 1
+)
+
+call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import sys, fastapi, pydantic, pydantic_core; print('[Python]', sys.version); print('[FastAPI]', fastapi.__version__); print('[Pydantic]', pydantic.__version__); print('[Pydantic Core]', pydantic_core.__version__)"
+if errorlevel 1 (
+    echo [ERROR] Python package verification failed inside conda env.
+    pause
+    exit /b 1
+)
+
 :: ====== GPU stack inside Conda env ======
 echo [Setup] Installing GPU PyTorch inside conda env...
 call "%CONDA_EXE%" run -n "%ENV_NAME%" python -m pip uninstall -y torch torchaudio torchvision torchcodec >nul 2>&1

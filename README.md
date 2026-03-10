@@ -72,7 +72,7 @@ start.bat
 
 - checks / installs **Miniforge (conda)**
 - creates or updates the conda environment (**Python 3.12**)
-- installs Python dependencies
+- force-reinstalls Python dependencies for the active interpreter
 - installs GPU PyTorch
 - installs `torchcodec`
 - starts the Python service
