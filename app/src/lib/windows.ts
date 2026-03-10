@@ -17,22 +17,27 @@ export function currentWindowKind(): WindowKind {
 
 export async function showWindow(kind: WindowKind) {
   const label = labels[kind]
-  const existing = await WebviewWindow.getByLabel(label)
+  try {
+    const existing = await WebviewWindow.getByLabel(label)
 
-  if (!existing) {
-    const win = new WebviewWindow(label, { url: `/#${kind}` })
-    await win.once('tauri://created', async () => {
-      await win.show()
-      await win.unminimize()
-      await win.setFocus()
-    })
-    return win
+    if (!existing) {
+      const win = new WebviewWindow(label, { url: `/#${kind}` })
+      await win.once('tauri://created', async () => {
+        await win.show()
+        await win.unminimize()
+        await win.setFocus()
+      })
+      return win
+    }
+
+    await existing.show()
+    await existing.unminimize()
+    await existing.setFocus()
+    return existing
+  } catch (error) {
+    console.error(`[windows] failed to open window: ${kind}`, error)
+    throw error
   }
-
-  await existing.show()
-  await existing.unminimize()
-  await existing.setFocus()
-  return existing
 }
 
 export async function focusWindow(kind: WindowKind) {
@@ -40,9 +45,14 @@ export async function focusWindow(kind: WindowKind) {
 }
 
 export async function hideWindow(kind: WindowKind) {
-  const win = await WebviewWindow.getByLabel(labels[kind])
-  if (!win) return
-  await win.hide()
+  try {
+    const win = await WebviewWindow.getByLabel(labels[kind])
+    if (!win) return
+    await win.hide()
+  } catch (error) {
+    console.error(`[windows] failed to hide window: ${kind}`, error)
+    throw error
+  }
 }
 
 export async function closeCurrentWindow() {

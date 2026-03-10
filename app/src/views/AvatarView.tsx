@@ -1,4 +1,4 @@
-import { MessageCircle, Mic, Settings, Sparkles } from 'lucide-react'
+import { MessageCircle, Mic, Move, Settings, Sparkles } from 'lucide-react'
 import type { AvatarState } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -24,11 +24,16 @@ export function AvatarView({ state, onOpenChat, onStartVoice, onOpenSettings }: 
         <section className="relative overflow-hidden rounded-[2rem] border border-border/60 bg-card/55 p-4 shadow-glow backdrop-blur-xl">
           <div className="absolute inset-0 bg-avatar-grid bg-[size:20px_20px] opacity-25" />
           <div className="relative flex flex-col items-center gap-4">
-            <div className="flex w-full items-center justify-between">
-              <Badge variant="secondary">Avatar</Badge>
-              <Badge variant={state === 'speaking' ? 'success' : state === 'listening' ? 'warning' : state === 'error' ? 'warning' : 'outline'}>
-                {stateLabel[state]}
-              </Badge>
+            <div data-tauri-drag-region className="flex w-full items-center justify-between rounded-xl border border-border/50 bg-background/35 px-3 py-2">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Move className="size-3.5" /> Drag me
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary">Avatar</Badge>
+                <Badge variant={state === 'speaking' ? 'success' : state === 'listening' ? 'warning' : state === 'error' ? 'warning' : 'outline'}>
+                  {stateLabel[state]}
+                </Badge>
+              </div>
             </div>
 
             <div className="relative flex h-[320px] w-full items-center justify-center rounded-[1.75rem] border border-primary/20 bg-gradient-to-b from-primary/15 via-background/15 to-background/5">
@@ -39,7 +44,7 @@ export function AvatarView({ state, onOpenChat, onStartVoice, onOpenSettings }: 
                     <Sparkles className="size-9" />
                   </div>
                   <div className="text-lg font-semibold">VRM / Live2D</div>
-                  <p className="mt-2 px-5 text-sm text-muted-foreground">平常就停在桌面上，滑鼠移上來再露出操作。</p>
+                  <p className="mt-2 px-5 text-sm text-muted-foreground">平常就停在桌面上，滑鼠移上來再露出操作。頂部區域現在可以直接拖曳移動。</p>
                 </div>
               </div>
 
