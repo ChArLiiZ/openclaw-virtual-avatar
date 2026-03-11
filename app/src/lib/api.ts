@@ -92,6 +92,7 @@ export async function sttUpload(baseUrl: string, file: File, language?: string):
 export type VoiceInfo = {
   name: string
   ref_text?: string
+  speaker_ready?: boolean
 }
 
 export async function fetchVoices(baseUrl: string): Promise<VoiceInfo[]> {
@@ -101,8 +102,16 @@ export async function fetchVoices(baseUrl: string): Promise<VoiceInfo[]> {
     throw new Error(error?.error || error?.detail || `Failed to list voices: ${res.status}`)
   }
   const data = await res.json()
-  const names: string[] = data?.voices ?? []
-  return names.map((name) => ({ name }))
+  const voices = Array.isArray(data?.voices) ? data.voices : []
+  return voices.map((voice: any) =>
+    typeof voice === 'string'
+      ? { name: voice, speaker_ready: false }
+      : {
+          name: String(voice?.name ?? ''),
+          ref_text: typeof voice?.ref_text === 'string' ? voice.ref_text : undefined,
+          speaker_ready: Boolean(voice?.speaker_ready),
+        },
+  ).filter((voice: VoiceInfo) => voice.name)
 }
 
 export async function uploadVoice(baseUrl: string, voiceName: string, audioFile: File, refText: string) {
@@ -128,6 +137,17 @@ export async function deleteVoice(baseUrl: string, voiceName: string) {
   if (!res.ok) {
     const error = await parseJsonSafe(res)
     throw new Error(error?.error || error?.detail || `Failed to delete voice: ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function trainVoice(baseUrl: string, voiceName: string) {
+  const res = await fetch(`${baseUrl}/voices/${encodeURIComponent(voiceName)}/train`, {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    const error = await parseJsonSafe(res)
+    throw new Error(error?.error || error?.detail || `Failed to train voice: ${res.status}`)
   }
   return res.json()
 }

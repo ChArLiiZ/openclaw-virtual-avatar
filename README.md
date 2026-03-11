@@ -21,7 +21,7 @@ OpenClaw (VPS)
 Local Windows PC
   └─ media-server
        ├─ Python service (FastAPI)
-       │   ├─ F5-TTS
+       │   ├─ CosyVoice3
        │   └─ faster-whisper
        ├─ Node.js proxy server
        └─ Tauri desktop app
@@ -33,7 +33,7 @@ Local Windows PC
 
 ### Current stack
 
-- **TTS**: F5-TTS
+- **TTS**: CosyVoice3
 - **Voice cloning**: supported
 - **STT**: faster-whisper
 - **Transport**: Tailscale
@@ -265,7 +265,7 @@ Use the project `start.bat` and let the launcher bring up the local stack for yo
 - integrated plugin + media-server into a single git project
 - conda-first Windows launcher working
 - dependency change detection in launcher working
-- F5-TTS voice cloning flow working end-to-end
+- CosyVoice3 voice cloning flow working end-to-end
 - local voice upload / storage / reuse flow working
 - Python + Node dual-service startup working
 - Python STT and Node proxy STT both working

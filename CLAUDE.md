@@ -17,7 +17,7 @@ OpenClaw Virtual Avatar — a virtual avatar system integrating local TTS/STT in
 | UI components | shadcn/ui-style custom components, lucide-react icons |
 | Node.js proxy | Express 4.18 (port 8080) |
 | Python service | FastAPI + Uvicorn (port 8081) |
-| TTS | F5-TTS (CUDA, float16) |
+| TTS | CosyVoice3 (CUDA) |
 | STT | faster-whisper (CUDA) |
 | Plugin schema | @sinclair/typebox |
 | Transport | Tailscale VPN |
@@ -111,7 +111,7 @@ plugin/src/            — OpenClaw plugin (index.ts)
 ### Python Service (8081)
 
 - `GET /health` — Service + model status
-- `POST /v1/audio/speech` — F5-TTS inference
+- `POST /v1/audio/speech` — CosyVoice3 inference
 - `POST /v1/audio/transcriptions` — faster-whisper STT
 - `POST /v1/audio/transcriptions/upload` — File upload STT variant
 

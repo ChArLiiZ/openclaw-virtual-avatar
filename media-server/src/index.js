@@ -2,7 +2,7 @@
  * Virtual Avatar Media Server
  *
  * Provides HTTP API for:
- * - TTS (Text-to-Speech) using F5-TTS via Python service
+ * - TTS (Text-to-Speech) using CosyVoice3 via Python service
  * - STT (Speech-to-Text) using faster-whisper via Python service
  * - Live2D/VRM model control
  *
@@ -91,6 +91,27 @@ app.get('/voices', async (req, res) => {
     const result = await pyRes.json();
     res.json(result);
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/voices/:voiceName/train', async (req, res) => {
+  try {
+    const url = `${CONFIG.pythonServiceUrl}/voices/${req.params.voiceName}/train`;
+    const pyRes = await fetch(url, {
+      method: 'POST',
+      signal: AbortSignal.timeout(10 * 60 * 1000), // 10 min — model load + train can be slow
+    });
+
+    if (!pyRes.ok) {
+      const err = await pyRes.text();
+      throw new Error(`Python service error: ${pyRes.status} ${err}`);
+    }
+
+    const result = await pyRes.json();
+    res.json(result);
+  } catch (error) {
+    console.error('[Voice Train Error]', error);
     res.status(500).json({ error: error.message });
   }
 });

@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
 Virtual Avatar - Python TTS/STT Service
-TTS: F5-TTS (zero-shot voice cloning, CUDA)
+TTS: CosyVoice3 (zero-shot voice cloning, CUDA)
 STT: faster-whisper (CUDA)
 
 Install:
     pip install -r requirements.txt
+    git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git CosyVoice
 
 Run:
     python server.py
 """
 
 import os
+import sys
 import re
 import io
 import gc
@@ -29,8 +31,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 import soundfile as sf
+import torch
 
-app = FastAPI(title="Virtual Avatar Python Service", version="0.2.0")
+app = FastAPI(title="Virtual Avatar Python Service", version="0.3.0")
 
 # ==================== Paths ====================
 
@@ -39,14 +42,18 @@ VOICES_DIR = DATA_DIR / "voices"     # 存放聲音參考音訊
 DATA_DIR.mkdir(exist_ok=True)
 VOICES_DIR.mkdir(exist_ok=True)
 
+# CosyVoice repo path (cloned by start.bat or manually)
+COSYVOICE_DIR = Path(__file__).parent / "CosyVoice"
+COSYVOICE_MODEL = os.getenv("COSYVOICE_MODEL", "FunAudioLLM/Fun-CosyVoice3-0.5B-2512")
+
 # 預設參考音訊（首次沒有自訂聲音時使用）
 DEFAULT_REF_AUDIO = DATA_DIR / "default_ref.wav"
-DEFAULT_REF_TEXT  = "Hello, this is a reference voice for F5-TTS."
+DEFAULT_REF_TEXT  = "Hello, this is a reference voice for CosyVoice."
 
 # ==================== Lazy-load models ====================
 
-_f5tts   = None
-_whisper = None
+_cosyvoice = None
+_whisper   = None
 MODEL_IDLE_SECONDS = int(os.getenv("MODEL_IDLE_SECONDS", "300"))
 _last_request_ts = time.time()
 _model_lock = threading.Lock()
@@ -58,12 +65,12 @@ def mark_model_activity():
 
 
 def unload_models(reason: str = "manual"):
-    global _f5tts, _whisper
+    global _cosyvoice, _whisper
 
     released = []
     with _model_lock:
-        if _f5tts is not None:
-            _f5tts = None
+        if _cosyvoice is not None:
+            _cosyvoice = None
             released.append("tts")
         if _whisper is not None:
             _whisper = None
@@ -93,20 +100,27 @@ def idle_unload_worker():
         idle_for = time.time() - _last_request_ts
         if idle_for < MODEL_IDLE_SECONDS:
             continue
-        if _f5tts is None and _whisper is None:
+        if _cosyvoice is None and _whisper is None:
             continue
         unload_models(reason=f"idle>{MODEL_IDLE_SECONDS}s")
 
 
-def get_f5tts():
-    global _f5tts
+def get_cosyvoice():
+    global _cosyvoice
     mark_model_activity()
-    if _f5tts is None:
-        from f5_tts.api import F5TTS
-        print("[TTS] Loading F5-TTS model (first load may take a moment)...")
-        _f5tts = F5TTS()
-        print("[TTS] F5-TTS loaded")
-    return _f5tts
+    if _cosyvoice is None:
+        # Add CosyVoice and its Matcha-TTS submodule to sys.path
+        cosyvoice_root = str(COSYVOICE_DIR)
+        matcha_path = str(COSYVOICE_DIR / "third_party" / "Matcha-TTS")
+        for p in [cosyvoice_root, matcha_path]:
+            if p not in sys.path:
+                sys.path.insert(0, p)
+
+        from cosyvoice.cli.cosyvoice import AutoModel
+        print(f"[TTS] Loading CosyVoice3 model: {COSYVOICE_MODEL} (first load may download ~10GB)...")
+        _cosyvoice = AutoModel(model_dir=COSYVOICE_MODEL)
+        print(f"[TTS] CosyVoice3 loaded (sample_rate={_cosyvoice.sample_rate})")
+    return _cosyvoice
 
 
 def get_whisper():
@@ -127,14 +141,46 @@ class TTSRequest(BaseModel):
     voice: str = "default"   # 對應 voices/ 資料夾內的聲音名稱
     speed: float = 1.0
 
+    speed: float = 1.0
+
+def get_voice_dir(voice: str) -> Path:
+    return VOICES_DIR / voice
+
+def get_voice_paths(voice: str) -> dict[str, Path]:
+    voice_dir = get_voice_dir(voice)
+    return {
+        "dir": voice_dir,
+        "audio": voice_dir / "ref.wav",
+        "text": voice_dir / "ref.txt",
+        "speaker": voice_dir / "speaker.pt",
+    }
+
+def speaker_file_exists(voice: str) -> bool:
+    return get_voice_paths(voice)["speaker"].exists()
+
+def read_voice_info(voice: str) -> dict:
+    paths = get_voice_paths(voice)
+    ref_text = ""
+    if paths["text"].exists():
+        ref_text = paths["text"].read_text(encoding="utf-8").strip()
+    return {
+        "name": voice,
+        "ref_text": ref_text,
+        "speaker_ready": paths["speaker"].exists(),
+    }
+
+def ensure_voice_assets(voice: str) -> tuple[str, str]:
+    paths = get_voice_paths(voice)
+    if paths["audio"].exists() and paths["text"].exists():
+        return str(paths["audio"]), paths["text"].read_text(encoding="utf-8").strip()
+    raise HTTPException(status_code=404, detail=f"Voice '{voice}' not found. Please upload a reference audio first.")
+
 def get_ref_audio_path(voice: str) -> tuple[str, str]:
     """取得參考音訊路徑與對應文字"""
-    voice_dir = VOICES_DIR / voice
-    audio_path = voice_dir / "ref.wav"
-    text_path  = voice_dir / "ref.txt"
-
-    if audio_path.exists() and text_path.exists():
-        return str(audio_path), text_path.read_text(encoding="utf-8").strip()
+    try:
+        return ensure_voice_assets(voice)
+    except HTTPException:
+        pass
     
     # 使用預設
     if DEFAULT_REF_AUDIO.exists():
@@ -200,33 +246,64 @@ def _make_silence(sr: int, seconds: float) -> np.ndarray:
     """Create a silence array of the given duration."""
     return np.zeros(int(sr * seconds), dtype=np.float32)
 
+def load_voice_speaker(voice: str, model=None):
+    paths = get_voice_paths(voice)
+    speaker_path = paths["speaker"]
+    if not speaker_path.exists():
+        raise HTTPException(status_code=404, detail=f"Speaker for voice '{voice}' not found. Train it first.")
+
+    cosy = model or get_cosyvoice()
+    speaker_payload = torch.load(speaker_path, map_location=cosy.frontend.device, weights_only=True)
+    cosy.frontend.spk2info[voice] = speaker_payload.get(voice, speaker_payload)
+    return cosy.frontend.spk2info[voice]
+
+def train_voice_speaker(voice: str):
+    model = get_cosyvoice()
+    ref_audio, ref_text = ensure_voice_assets(voice)
+    prompt_text = f"You are a helpful assistant.<|endofprompt|>{ref_text}"
+
+    if voice in model.frontend.spk2info:
+        del model.frontend.spk2info[voice]
+
+    model.add_zero_shot_spk(prompt_text, ref_audio, voice)
+    speaker_info = model.frontend.spk2info[voice]
+    torch.save({voice: speaker_info}, get_voice_paths(voice)["speaker"])
+    print(f"[Voice] Trained speaker '{voice}'")
+    return read_voice_info(voice)
+
 
 @app.post("/v1/audio/speech")
 async def text_to_speech(req: TTSRequest):
     mark_model_activity()
     try:
-        model = get_f5tts()
-        ref_audio, ref_text = get_ref_audio_path(req.voice)
+        model = get_cosyvoice()
+        if not speaker_file_exists(req.voice):
+            raise HTTPException(status_code=409, detail=f"Speaker for voice '{req.voice}' is not trained yet.")
+        load_voice_speaker(req.voice, model)
 
         segments = _split_sentences(req.input)
         print(f"[TTS] voice={req.voice} segments={len(segments)} text={req.input[:60]}...")
 
+        sr_out = model.sample_rate
         audio_parts: list[np.ndarray] = []
-        sr_out = None
 
         for seg_text, pause in segments:
-            wav, sr, _ = model.infer(
-                ref_file=ref_audio,
-                ref_text=ref_text,
-                gen_text=seg_text,
+            for chunk in model.inference_zero_shot(
+                tts_text=seg_text,
+                prompt_text="",
+                prompt_wav="",
+                zero_shot_spk_id=req.voice,
+                stream=False,
                 speed=req.speed,
-            )
-            sr_out = sr
-            audio_parts.append(wav)
-            if pause > 0:
-                audio_parts.append(_make_silence(sr, pause))
+            ):
+                # chunk['tts_speech'] is a torch tensor of shape (1, N)
+                wav = chunk['tts_speech'].squeeze(0).cpu().numpy()
+                audio_parts.append(wav)
 
-        if not audio_parts or sr_out is None:
+            if pause > 0:
+                audio_parts.append(_make_silence(sr_out, pause))
+
+        if not audio_parts:
             raise HTTPException(status_code=400, detail="No audio generated (empty input?)")
 
         combined = np.concatenate(audio_parts)
@@ -255,7 +332,7 @@ def list_voices():
     voices = []
     for d in VOICES_DIR.iterdir():
         if d.is_dir() and (d / "ref.wav").exists():
-            voices.append(d.name)
+            voices.append(read_voice_info(d.name))
     return {"voices": voices}
 
 @app.post("/voices/{voice_name}")
@@ -265,28 +342,44 @@ async def upload_voice(
     ref_text: str = Form(...),
 ):
     """上傳聲音參考音訊（供克隆使用）"""
-    voice_dir = VOICES_DIR / voice_name
+    voice_dir = get_voice_dir(voice_name)
     voice_dir.mkdir(exist_ok=True)
-    
-    audio_path = voice_dir / "ref.wav"
-    text_path  = voice_dir / "ref.txt"
+    paths = get_voice_paths(voice_name)
     
     # 儲存音訊
     contents = await audio.read()
-    audio_path.write_bytes(contents)
+    paths["audio"].write_bytes(contents)
     
     # 儲存對應文字
-    text_path.write_text(ref_text, encoding="utf-8")
+    paths["text"].write_text(ref_text, encoding="utf-8")
+    if paths["speaker"].exists():
+        paths["speaker"].unlink()
+    if _cosyvoice is not None and voice_name in _cosyvoice.frontend.spk2info:
+        del _cosyvoice.frontend.spk2info[voice_name]
     
     print(f"[Voice] Saved voice '{voice_name}': {len(contents)} bytes")
-    return {"status": "ok", "voice": voice_name, "ref_text": ref_text}
+    return {"status": "ok", "voice": voice_name, "ref_text": ref_text, "speaker_ready": False}
+
+@app.post("/voices/{voice_name}/train")
+def train_voice(voice_name: str):
+    mark_model_activity()
+    try:
+        info = train_voice_speaker(voice_name)
+        return {"status": "ok", "voice": voice_name, "speaker_ready": True, "voice_info": info}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Voice Train Error] {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/voices/{voice_name}")
 def delete_voice(voice_name: str):
     """刪除聲音"""
-    voice_dir = VOICES_DIR / voice_name
+    voice_dir = get_voice_dir(voice_name)
     if not voice_dir.exists():
         raise HTTPException(status_code=404, detail="Voice not found")
+    if _cosyvoice is not None and voice_name in _cosyvoice.frontend.spk2info:
+        del _cosyvoice.frontend.spk2info[voice_name]
     shutil.rmtree(voice_dir)
     return {"status": "ok", "deleted": voice_name}
 
@@ -404,11 +497,11 @@ def health():
     return {
         "status": "ok",
         "service": "python-tts-stt",
-        "version": "0.2.0",
-        "tts": "f5-tts",
+        "version": "0.3.0",
+        "tts": "cosyvoice3",
         "model_idle_seconds": MODEL_IDLE_SECONDS,
         "models_loaded": {
-            "tts": _f5tts is not None,
+            "tts": _cosyvoice is not None,
             "stt": _whisper is not None,
         },
     }

@@ -95,15 +95,68 @@ if not defined ENV_EXISTS (
     if errorlevel 1 goto :conda_fail
     call :update_hash "%ENV_FILE%" "%STATE_DIR%\environment.sha256"
 ) else (
-    call :hash_changed "%ENV_FILE%" "%STATE_DIR%\environment.sha256"
-    if errorlevel 1 (
-        echo [Setup] environment.yml changed. Updating conda environment...
-        call "%CONDA_EXE%" env update -n "%ENV_NAME%" -f "%ENV_FILE%" --prune
+    :: Check if Python major.minor version matches environment.yml
+    set "NEED_RECREATE="
+    set "EXPECTED_PY="
+    set "ACTUAL_PY="
+    for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "(Select-String -Path '%ENV_FILE%' -Pattern 'python=(\d+\.\d+)' | ForEach-Object { $_.Matches.Groups[1].Value })"`) do set "EXPECTED_PY=%%V"
+    for /f "tokens=2 delims= " %%V in ('call "%CONDA_EXE%" run -n "%ENV_NAME%" python -V 2^>nul') do (
+        for /f "tokens=1,2 delims=." %%A in ("%%V") do set "ACTUAL_PY=%%A.%%B"
+    )
+    echo [Setup] Expected Python=!EXPECTED_PY!  Actual Python=!ACTUAL_PY!
+    if defined EXPECTED_PY if defined ACTUAL_PY (
+        if not "!EXPECTED_PY!"=="!ACTUAL_PY!" (
+            echo [Setup] Python version mismatch detected!
+            set "NEED_RECREATE=1"
+        )
+    )
+    if defined EXPECTED_PY if not defined ACTUAL_PY (
+        echo [Setup] Could not detect current Python version. Forcing recreate.
+        set "NEED_RECREATE=1"
+    )
+    if not defined NEED_RECREATE (
+        call "%CONDA_EXE%" run -n "%ENV_NAME%" python -c "import numpy"
+        if errorlevel 1 (
+            echo [Setup] Existing numpy install is broken. Forcing recreate.
+            set "NEED_RECREATE=1"
+        )
+    )
+
+    if defined NEED_RECREATE (
+        echo [Setup] Removing old conda environment to recreate with correct Python version...
+        call "%CONDA_EXE%" env remove -n "%ENV_NAME%" -y
+        if errorlevel 1 goto :conda_fail
+        echo [Setup] Creating conda environment from environment.yml...
+        call "%CONDA_EXE%" env create -f "%ENV_FILE%"
         if errorlevel 1 goto :conda_fail
         call :update_hash "%ENV_FILE%" "%STATE_DIR%\environment.sha256"
+        :: Force pip reinstall after env recreate
+        if exist "%STATE_DIR%\python-requirements.sha256" del "%STATE_DIR%\python-requirements.sha256"
     ) else (
-        echo [Setup] Conda environment unchanged. Skipping env update.
+        call :hash_changed "%ENV_FILE%" "%STATE_DIR%\environment.sha256"
+        if errorlevel 1 (
+            echo [Setup] environment.yml changed. Updating conda environment...
+            call "%CONDA_EXE%" env update -n "%ENV_NAME%" -f "%ENV_FILE%" --prune
+            if errorlevel 1 goto :conda_fail
+            call :update_hash "%ENV_FILE%" "%STATE_DIR%\environment.sha256"
+        ) else (
+            echo [Setup] Conda environment unchanged. Skipping env update.
+        )
     )
+)
+
+:: ====== Clone CosyVoice (if not present) ======
+set "COSYVOICE_DIR=%CD%\python\CosyVoice"
+if not exist "%COSYVOICE_DIR%\cosyvoice" (
+    echo [Setup] Cloning CosyVoice repository ^(with submodules^)...
+    git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git "%COSYVOICE_DIR%"
+    if errorlevel 1 (
+        echo [ERROR] Failed to clone CosyVoice repository.
+        pause
+        exit /b 1
+    )
+) else (
+    echo [Setup] CosyVoice repository already present.
 )
 
 :: ====== Python packages: update when requirements change or verification fails ======
@@ -216,32 +269,41 @@ where cargo >nul 2>&1
 if not errorlevel 1 set "TAURI_READY=1"
 
 :: ====== Start services ======
-echo [OK] Starting services...
-echo [Note] First run may download F5-TTS / Whisper models, so Python 視窗短時間沒反應是正常的。
+:: Python and Node are now spawned by Tauri (src-tauri/src/lib.rs).
+echo [OK] Environment ready.
+echo [Note] First run may download CosyVoice3 / Whisper models (~10GB).
 
-start "Virtual Avatar - Python (8081)" cmd /k "call "%CONDA_EXE%" run -n "%ENV_NAME%" python -u python\server.py"
-timeout /t 3 /nobreak > nul
-start "Virtual Avatar - Node (8080)" cmd /k "node src/index.js"
+set "USE_TAURI="
+if defined TAURI_READY if exist "%APP_DIR%\package.json" set "USE_TAURI=1"
 
-if defined TAURI_READY if exist "%APP_DIR%\package.json" (
-    timeout /t 2 /nobreak > nul
-    start "Virtual Avatar - Desktop UI" cmd /k "cd /d "%APP_DIR%" && npm run tauri:dev"
+if defined USE_TAURI (
+    echo.
+    echo  Starting Tauri desktop app...
+    echo  Python/Node will be spawned by Tauri automatically.
+    echo  Use system tray icon to quit all services.
+    echo.
+    pushd "%APP_DIR%"
+    call npm run tauri:dev
+    set "TAURI_RC=!errorlevel!"
+    popd
+    if not "!TAURI_RC!"=="0" (
+        echo.
+        echo [ERROR] Tauri exited with code !TAURI_RC!
+        pause
+    )
 ) else (
-    echo [WARN] Rust/Tauri not ready yet. Skipping desktop window launch.
+    echo [WARN] Rust/Tauri not ready. Falling back to standalone services...
+    start "Virtual Avatar - Python (8081)" cmd /k "call "%CONDA_EXE%" run -n "%ENV_NAME%" python -u python\server.py"
+    timeout /t 3 /nobreak > nul
+    start "Virtual Avatar - Node (8080)" cmd /k "node src/index.js"
+    echo.
+    echo  Virtual Avatar is running!
+    echo   Node   ^> http://localhost:8080
+    echo   Python ^> http://localhost:8081
+    echo  Conda env ^> %ENV_NAME%
+    echo.
+    echo  Close all opened windows to stop the services.
 )
-
-echo.
-echo  Virtual Avatar is running!
-echo   Node   ^> http://localhost:8080
-echo   Python ^> http://localhost:8081
-if defined TAURI_READY (
-    echo   Desktop^> Tauri window launch requested
-) else (
-    echo   Desktop^> skipped ^(Rust / Tauri toolchain missing^)
-)
-echo  Conda env ^> %ENV_NAME%
-echo.
-echo  Close all opened windows to stop the services.
 exit /b 0
 
 :npm_sync

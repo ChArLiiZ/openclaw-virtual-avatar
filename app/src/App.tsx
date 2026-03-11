@@ -4,7 +4,7 @@ import { ChatView } from '@/views/ChatView'
 import { RecordView } from '@/views/RecordView'
 import { SettingsView } from '@/views/SettingsView'
 import type { AvatarState, ChatMessage, ViewMode } from '@/types'
-import { deleteVoice, fetchHealth, fetchVoices, openClawRespond, sttUpload, ttsRequest, uploadVoice, type HealthInfo, type VoiceInfo } from '@/lib/api'
+import { deleteVoice, fetchHealth, fetchVoices, openClawRespond, sttUpload, trainVoice, ttsRequest, uploadVoice, type HealthInfo, type VoiceInfo } from '@/lib/api'
 import { currentWindowKind, hideAndFocusChat, hideCurrentWindow, showWindow } from '@/lib/windows'
 import { publishSttResult, sendChatMessage, setSharedDraft, subscribeBridge } from '@/lib/bridge'
 import { useMediaRecorder } from '@/lib/useMediaRecorder'
@@ -31,6 +31,7 @@ export default function App() {
   const [voices, setVoices] = useState<VoiceInfo[]>([])
   const [voicesLoading, setVoicesLoading] = useState(false)
   const [voicesError, setVoicesError] = useState<string | null>(null)
+  const [voiceActionBusy, setVoiceActionBusy] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'assistant', text: '早安。接下來會改成真正的多視窗桌面角色。' },
     { role: 'assistant', text: '這裡會保留簡單對話，不塞太多工程控制。' },
@@ -110,12 +111,40 @@ export default function App() {
     }
   }
 
+  async function handleTrainVoice(name: string) {
+    setVoiceActionBusy(true)
+    try {
+      await trainVoice(serverUrl, name)
+      await refreshVoices()
+      setVoice(name)
+    } finally {
+      setVoiceActionBusy(false)
+    }
+  }
+
+  const activeVoiceInfo = voices.find((item) => item.name === voice)
+  const canGenerateSpeech = Boolean(voice && activeVoiceInfo?.speaker_ready && !voiceActionBusy)
+
   useEffect(() => {
     if (view === 'settings') {
       void refreshHealth()
       void refreshVoices()
     }
   }, [serverUrl, pythonUrl, view])
+
+  // Auto-retry polling: when services aren't reachable yet, retry every 5s
+  useEffect(() => {
+    if (view !== 'settings') return
+    const hasHealth = nodeHealth || pythonHealth
+    const hasVoices = voices.length > 0
+    if (hasHealth && hasVoices) return // already connected
+
+    const timer = setInterval(() => {
+      void refreshHealth()
+      void refreshVoices()
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [view, nodeHealth, pythonHealth, voices.length])
 
   async function playBlob(blob: Blob) {
     if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl)
@@ -334,8 +363,11 @@ export default function App() {
       onVoiceChange={setVoice}
       onUploadVoice={handleUploadVoice}
       onDeleteVoice={handleDeleteVoice}
+      onTrainVoice={handleTrainVoice}
       onTextChange={setTtsText}
       onTranscriptChange={updateDraft}
+      canGenerateSpeech={canGenerateSpeech}
+      voiceActionBusy={voiceActionBusy}
       onGenerateSpeech={() => void handleSend(ttsText)}
     />
   )

@@ -31,13 +31,18 @@ function VoiceList({
   active,
   onSelect,
   onDelete,
+  onTrain,
+  actionBusy,
 }: {
   voices: VoiceInfo[]
   active: string
   onSelect: (name: string) => void
   onDelete: (name: string) => Promise<void>
+  onTrain: (name: string) => Promise<void>
+  actionBusy: boolean
 }) {
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [training, setTraining] = useState<string | null>(null)
 
   async function handleDelete(name: string) {
     setDeleting(name)
@@ -45,6 +50,15 @@ function VoiceList({
       await onDelete(name)
     } finally {
       setDeleting(null)
+    }
+  }
+
+  async function handleTrain(name: string) {
+    setTraining(name)
+    try {
+      await onTrain(name)
+    } finally {
+      setTraining(null)
     }
   }
 
@@ -68,6 +82,23 @@ function VoiceList({
           >
             {isActive && <Check className="size-3.5 shrink-0 text-primary" />}
             <span className="flex-1 truncate font-medium">{v.name}</span>
+            <Badge variant={v.speaker_ready ? 'secondary' : 'outline'} className="h-6 px-2 text-[10px]">
+              {v.speaker_ready ? 'Speaker ready' : 'Untrained'}
+            </Badge>
+            {!v.speaker_ready && isActive ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 px-2 text-[10px]"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void handleTrain(v.name)
+                }}
+                disabled={training === v.name || deleting === v.name || actionBusy}
+              >
+                {training === v.name ? <RefreshCw className="size-3 animate-spin" /> : 'Train'}
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               size="sm"
@@ -76,7 +107,7 @@ function VoiceList({
                 e.stopPropagation()
                 void handleDelete(v.name)
               }}
-              disabled={deleting === v.name}
+              disabled={deleting === v.name || training === v.name}
             >
               <Trash2 className="size-3.5" />
             </Button>
@@ -201,8 +232,11 @@ export function SettingsView({
   onVoiceChange,
   onUploadVoice,
   onDeleteVoice,
+  onTrainVoice,
   onTextChange,
   onTranscriptChange,
+  canGenerateSpeech,
+  voiceActionBusy,
   onGenerateSpeech,
 }: {
   serverUrl: string
@@ -233,8 +267,11 @@ export function SettingsView({
   onVoiceChange: (value: string) => void
   onUploadVoice: (name: string, audioFile: File, refText: string) => Promise<void>
   onDeleteVoice: (name: string) => Promise<void>
+  onTrainVoice: (name: string) => Promise<void>
   onTextChange: (value: string) => void
   onTranscriptChange: (value: string) => void
+  canGenerateSpeech: boolean
+  voiceActionBusy: boolean
   onGenerateSpeech: () => void
 }) {
   const roadmap = [
@@ -246,6 +283,8 @@ export function SettingsView({
   ]
 
   const modelLoadedCount = Number(Boolean(pythonHealth?.models_loaded?.tts)) + Number(Boolean(pythonHealth?.models_loaded?.stt))
+  const activeVoiceInfo = voices.find((item) => item.name === voice)
+  const speakerReady = Boolean(activeVoiceInfo?.speaker_ready)
 
   return (
     <main className="mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-6 py-8">
@@ -325,11 +364,34 @@ export function SettingsView({
                     </Button>
                   </div>
                   {voicesError && <div className="text-xs text-yellow-300">{voicesError}</div>}
-                  <VoiceList voices={voices} active={voice} onSelect={onVoiceChange} onDelete={onDeleteVoice} />
+                  <VoiceList voices={voices} active={voice} onSelect={onVoiceChange} onDelete={onDeleteVoice} onTrain={onTrainVoice} actionBusy={voiceActionBusy} />
                 </div>
 
                 {/* Upload new voice */}
                 <VoiceUploadForm onUpload={onUploadVoice} />
+
+                <div className="rounded-xl border border-border/70 bg-background/30 px-3 py-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-medium">Speaker cache</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {voice
+                          ? speakerReady
+                            ? `Voice "${voice}" 已建立 speaker，可直接產生語音。`
+                            : `Voice "${voice}" 目前只有參考音檔，先按 Train speaker 建立 speaker。`
+                          : '先選一個 voice。'}
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      onClick={() => voice && void onTrainVoice(voice)}
+                      disabled={!voice || speakerReady || voiceActionBusy}
+                    >
+                      {voiceActionBusy ? <RefreshCw className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                      Train speaker
+                    </Button>
+                  </div>
+                </div>
 
                 {/* TTS test */}
                 <div className="space-y-2">
@@ -337,8 +399,9 @@ export function SettingsView({
                   <Textarea id="ttsText" value={text} onChange={(e) => onTextChange(e.target.value)} />
                 </div>
                 <div className="flex flex-wrap gap-3">
-                  <Button onClick={onGenerateSpeech} disabled={!voice}><Sparkles className="size-4" /> Generate speech</Button>
+                  <Button onClick={onGenerateSpeech} disabled={!canGenerateSpeech}><Sparkles className="size-4" /> Generate speech</Button>
                 </div>
+                {!speakerReady && voice ? <div className="text-xs text-yellow-300">Generate speech 需要先完成 speaker training。</div> : null}
               </CardContent>
             </Card>
 

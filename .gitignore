@@ -36,6 +36,12 @@ __pycache__/
 *.pyo
 .python-version
 
+# CosyVoice (cloned at runtime by start.bat)
+media-server/python/CosyVoice/
+
+# CosyVoice / ModelScope model cache
+pretrained_models/
+
 # Voice reference data (user-specific, may contain large audio files)
 media-server/python/data/voices/*/ref.wav
 media-server/python/data/voices/*/ref.txt
