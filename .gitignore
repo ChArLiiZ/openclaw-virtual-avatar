@@ -29,6 +29,7 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+media-server/python/logs/
 
 # Python
 __pycache__/
@@ -42,9 +43,11 @@ media-server/python/CosyVoice/
 # CosyVoice / ModelScope model cache
 pretrained_models/
 
-# Voice reference data (user-specific, may contain large audio files)
+# Voice data (user-specific, large audio/model files)
 media-server/python/data/voices/*/ref.wav
 media-server/python/data/voices/*/ref.txt
+media-server/python/data/voices/*/speaker.pt
+media-server/python/data/default_ref.wav
 
 # TypeScript
 *.tsbuildinfo

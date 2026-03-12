@@ -295,6 +295,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .on_window_event(|window, event| {
             // All windows hide on close — only tray "退出全部" truly exits.
             if let WindowEvent::CloseRequested { api, .. } = event {

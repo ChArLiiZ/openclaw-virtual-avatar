@@ -18,14 +18,17 @@ import re
 import io
 import gc
 import time
+import logging
 import threading
 import tempfile
 import base64
 import shutil
 import subprocess
+import traceback
 import numpy as np
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -33,7 +36,32 @@ import uvicorn
 import soundfile as sf
 import torch
 
+# ==================== Logging ====================
+
+LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "server.log"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+log = logging.getLogger("avatar")
+log.info("=== Python service starting ===")
+
 app = FastAPI(title="Virtual Avatar Python Service", version="0.3.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ==================== Paths ====================
 
@@ -190,61 +218,71 @@ def get_ref_audio_path(voice: str) -> tuple[str, str]:
 
 # ── Sentence splitting for natural pauses ──
 
-# Punctuation that should produce a longer pause (sentence boundaries)
+# Split only on sentence-ending punctuation (。！？!?\n).
+# CosyVoice handles clause-level pauses (commas, semicolons) internally.
 _SENTENCE_RE = re.compile(r'(?<=[。！？!?\n])\s*')
-# Punctuation that should produce a shorter pause (clause boundaries)
-_CLAUSE_RE = re.compile(r'(?<=[，,、；;：:…—–])\s*')
+_SENTENCE_PAUSE = 0.35   # silence inserted between sentences
 
-# Silence durations in seconds
-_SENTENCE_PAUSE = 0.45   # after 。！？
-_CLAUSE_PAUSE   = 0.20   # after ，、；：…
+def _stripped_len(text: str) -> int:
+    """Return the number of 'real' characters (excluding punctuation/whitespace)."""
+    return len(re.sub(r'[。！？!?，,、；;：:…—–\s]+', '', text))
+
 
 def _split_sentences(text: str) -> list[tuple[str, float]]:
-    """Split text into segments with pause durations after each segment.
+    """Split text on sentence boundaries only.
 
     Returns a list of (segment_text, pause_seconds) tuples.
-    The last segment has 0 pause.
+    The last segment has 0 pause. Short sentences are merged with neighbours.
     """
     text = text.strip()
     if not text:
         return []
 
-    # First split on sentence-ending punctuation
-    sentences = _SENTENCE_RE.split(text)
+    parts = [s.strip() for s in _SENTENCE_RE.split(text) if s.strip()]
+    if not parts:
+        return [(text, 0.0)]
 
-    result: list[tuple[str, float]] = []
-    for i, sentence in enumerate(sentences):
-        sentence = sentence.strip()
-        if not sentence:
-            continue
+    # Merge short sentences with the next one
+    merged: list[str] = []
+    for part in parts:
+        if merged and _stripped_len(merged[-1]) < _MIN_TTS_CHARS:
+            merged[-1] = merged[-1] + part
+        else:
+            merged.append(part)
 
-        # Further split long sentences on clause punctuation
-        clauses = _CLAUSE_RE.split(sentence)
-        for j, clause in enumerate(clauses):
-            clause = clause.strip()
-            if not clause:
-                continue
+    # If the last one is still too short, merge into previous
+    if len(merged) > 1 and _stripped_len(merged[-1]) < _MIN_TTS_CHARS:
+        last = merged.pop()
+        merged[-1] = merged[-1] + last
 
-            # Determine pause: last clause of sentence gets sentence pause,
-            # mid-sentence clauses get clause pause, very last segment gets 0
-            is_last_overall = (i == len(sentences) - 1) and (j == len(clauses) - 1)
-            is_last_clause = (j == len(clauses) - 1)
-
-            if is_last_overall:
-                pause = 0.0
-            elif is_last_clause:
-                pause = _SENTENCE_PAUSE
-            else:
-                pause = _CLAUSE_PAUSE
-
-            result.append((clause, pause))
-
-    return result if result else [(text, 0.0)]
+    # Assign pauses: sentence pause between segments, 0 for the last
+    return [(seg, _SENTENCE_PAUSE if i < len(merged) - 1 else 0.0)
+            for i, seg in enumerate(merged)]
 
 
 def _make_silence(sr: int, seconds: float) -> np.ndarray:
     """Create a silence array of the given duration."""
     return np.zeros(int(sr * seconds), dtype=np.float32)
+
+# CosyVoice Conv1d kernel=4, so the tokenized input must have >=4 frames.
+# Very short text (1~2 chars) can produce fewer frames and crash.
+# We pad short segments with filler so the model sees enough tokens.
+_MIN_TTS_CHARS = 6
+
+def _pad_short_text(text: str) -> str:
+    """Pad very short text to avoid Conv1d kernel size errors in CosyVoice.
+
+    Wraps short input into a longer phrase so the tokenizer produces enough frames.
+    """
+    # Strip punctuation to measure real content length
+    stripped = re.sub(r'[。！？!?，,、；;：:…—–\s]+', '', text)
+    if len(stripped) >= _MIN_TTS_CHARS:
+        return text
+    # Repeat the text to make it long enough
+    repeated = text
+    while len(re.sub(r'[。！？!?，,、；;：:…—–\s]+', '', repeated)) < _MIN_TTS_CHARS:
+        repeated = repeated + "，" + text
+    return repeated
 
 def load_voice_speaker(voice: str, model=None):
     paths = get_voice_paths(voice)
@@ -260,15 +298,16 @@ def load_voice_speaker(voice: str, model=None):
 def train_voice_speaker(voice: str):
     model = get_cosyvoice()
     ref_audio, ref_text = ensure_voice_assets(voice)
-    prompt_text = f"You are a helpful assistant.<|endofprompt|>{ref_text}"
 
     if voice in model.frontend.spk2info:
         del model.frontend.spk2info[voice]
 
-    model.add_zero_shot_spk(prompt_text, ref_audio, voice)
+    # prompt_text for zero-shot = plain reference transcript.
+    # Do NOT use instruct format (<|endofprompt|>) — that corrupts the speaker embedding.
+    model.add_zero_shot_spk(ref_text, ref_audio, voice)
     speaker_info = model.frontend.spk2info[voice]
     torch.save({voice: speaker_info}, get_voice_paths(voice)["speaker"])
-    print(f"[Voice] Trained speaker '{voice}'")
+    log.info(f"[Voice] Trained speaker '{voice}'")
     return read_voice_info(voice)
 
 
@@ -282,29 +321,41 @@ async def text_to_speech(req: TTSRequest):
         load_voice_speaker(req.voice, model)
 
         segments = _split_sentences(req.input)
-        print(f"[TTS] voice={req.voice} segments={len(segments)} text={req.input[:60]}...")
+        log.info(f"[TTS] voice={req.voice} segments={len(segments)} text={req.input[:80]!r}")
+        for idx, (st, sp) in enumerate(segments):
+            log.info(f"  [{idx}] stripped={_stripped_len(st)} chars, pause={sp}s, text={st!r}")
 
         sr_out = model.sample_rate
         audio_parts: list[np.ndarray] = []
 
-        for seg_text, pause in segments:
-            for chunk in model.inference_zero_shot(
-                tts_text=seg_text,
-                prompt_text="",
-                prompt_wav="",
-                zero_shot_spk_id=req.voice,
-                stream=False,
-                speed=req.speed,
-            ):
-                # chunk['tts_speech'] is a torch tensor of shape (1, N)
-                wav = chunk['tts_speech'].squeeze(0).cpu().numpy()
-                audio_parts.append(wav)
+        for seg_idx, (seg_text, pause) in enumerate(segments):
+            padded = _pad_short_text(seg_text)
+            if padded != seg_text:
+                log.info(f"  [{seg_idx}] padded: {seg_text!r} → {padded!r}")
+            try:
+                for chunk in model.inference_zero_shot(
+                    tts_text=padded,
+                    prompt_text="",
+                    prompt_wav="",
+                    zero_shot_spk_id=req.voice,
+                    stream=False,
+                    speed=req.speed,
+                ):
+                    # chunk['tts_speech'] is a torch tensor of shape (1, N)
+                    wav = chunk['tts_speech'].squeeze(0).cpu().numpy()
+                    audio_parts.append(wav)
+                    log.info(f"  [{seg_idx}] inference OK, samples={len(wav)}")
+            except Exception as e:
+                log.error(f"  [{seg_idx}] inference FAILED: {type(e).__name__}: {e}")
+                log.error(f"  [{seg_idx}] traceback:\n{traceback.format_exc()}")
+                continue
 
             if pause > 0:
                 audio_parts.append(_make_silence(sr_out, pause))
 
         if not audio_parts:
-            raise HTTPException(status_code=400, detail="No audio generated (empty input?)")
+            log.error(f"[TTS] All segments failed — no audio generated. Input: {req.input!r}")
+            raise HTTPException(status_code=400, detail="No audio generated — all segments failed inference. Check server.log for details.")
 
         combined = np.concatenate(audio_parts)
 
@@ -321,7 +372,7 @@ async def text_to_speech(req: TTSRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[TTS Error] {e}")
+        log.error(f"[TTS] Unhandled error: {type(e).__name__}: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ==================== 聲音克隆管理 ====================

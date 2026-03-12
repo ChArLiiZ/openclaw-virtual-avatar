@@ -38,6 +38,14 @@ const CONFIG = {
 };
 
 // Proxy helper to Python service
+class PythonServiceError extends Error {
+  constructor(status, detail) {
+    super(detail);
+    this.name = 'PythonServiceError';
+    this.status = status;
+  }
+}
+
 async function proxyToPython(endpoint, body) {
   const url = `${CONFIG.pythonServiceUrl}${endpoint}`;
   const pyRes = await fetch(url, {
@@ -46,8 +54,15 @@ async function proxyToPython(endpoint, body) {
     body: JSON.stringify(body),
   });
   if (!pyRes.ok) {
-    const err = await pyRes.text();
-    throw new Error(`Python service error: ${pyRes.status} ${err}`);
+    const errText = await pyRes.text();
+    let detail;
+    try {
+      const parsed = JSON.parse(errText);
+      detail = parsed.detail || errText;
+    } catch {
+      detail = errText;
+    }
+    throw new PythonServiceError(pyRes.status, detail);
   }
   return pyRes;
 }
@@ -161,7 +176,8 @@ app.post('/v1/audio/speech', async (req, res) => {
     res.send(buf);
   } catch (error) {
     console.error('[TTS Error]', error);
-    res.status(500).json({ error: error.message });
+    const status = error instanceof PythonServiceError ? error.status : 500;
+    res.status(status).json({ error: error.message });
   }
 });
 

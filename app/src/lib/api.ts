@@ -152,37 +152,105 @@ export async function trainVoice(baseUrl: string, voiceName: string) {
   return res.json()
 }
 
-export async function openClawRespond(cfg: OpenClawConfig, input: string): Promise<string> {
-  if (!cfg.gatewayUrl.trim()) {
-    throw new Error('OpenClaw gateway URL is empty')
-  }
+export type GatewayHealthResult = {
+  ok: boolean
+  status?: number
+  message?: string
+  data?: any
+}
 
+function gatewayHeaders(cfg: OpenClawConfig): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'x-openclaw-agent-id': cfg.agentId || 'main',
   }
-
   if (cfg.token?.trim()) {
     headers.Authorization = `Bearer ${cfg.token.trim()}`
   }
+  return headers
+}
 
-  const res = await fetch(`${cfg.gatewayUrl.replace(/\/$/, '')}/v1/responses`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model: 'openclaw',
-      input,
-      user: cfg.user || 'virtual-avatar-desktop',
-    }),
-  })
+function gatewayBase(cfg: OpenClawConfig) {
+  return cfg.gatewayUrl.replace(/\/$/, '')
+}
+
+export async function testGatewayConnection(cfg: OpenClawConfig): Promise<GatewayHealthResult> {
+  if (!cfg.gatewayUrl.trim()) {
+    return { ok: false, message: 'Gateway URL is empty' }
+  }
+  const url = `${gatewayBase(cfg)}/health`
+  const headers = gatewayHeaders(cfg)
+  console.log('[Gateway] Testing connection…', { url, headers: { ...headers, Authorization: headers.Authorization ? '***' : undefined } })
+  try {
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(8000) })
+    if (res.ok) {
+      const data = await parseJsonSafe(res)
+      console.log('[Gateway] Health OK', { status: res.status, data })
+      return { ok: true, status: res.status, data }
+    }
+    const body = await parseJsonSafe(res)
+    console.warn('[Gateway] Health responded with error', { status: res.status, body })
+    return { ok: false, status: res.status, message: `HTTP ${res.status}` }
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err)
+    const isTimeout = raw.includes('AbortError') || raw.includes('timeout') || raw.includes('TimeoutError')
+    const friendly = isTimeout
+      ? 'Connection timed out (8s)'
+      : raw === 'Failed to fetch'
+        ? `無法連線 — 可能是 CORS、網路不通、或 URL 錯誤 (${url})`
+        : raw
+    console.error('[Gateway] Connection test failed', { url, error: raw, type: (err as any)?.constructor?.name })
+    return { ok: false, message: friendly }
+  }
+}
+
+export type OpenClawResponse = {
+  text: string
+  responseId?: string
+}
+
+export async function openClawRespond(cfg: OpenClawConfig, input: string, previousResponseId?: string): Promise<OpenClawResponse> {
+  if (!cfg.gatewayUrl.trim()) {
+    throw new Error('OpenClaw gateway URL is empty')
+  }
+
+  const url = `${gatewayBase(cfg)}/v1/responses`
+  const body: Record<string, any> = {
+    model: 'openclaw',
+    input,
+    user: cfg.user || 'virtual-avatar-desktop',
+  }
+  if (previousResponseId) {
+    body.previous_response_id = previousResponseId
+  }
+
+  console.log('[Gateway] POST /v1/responses', { url, input: input.slice(0, 80), previousResponseId })
+
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: gatewayHeaders(cfg),
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err)
+    console.error('[Gateway] /v1/responses fetch failed', { url, error: raw, type: (err as any)?.constructor?.name })
+    throw new Error(`Gateway 連線失敗: ${raw === 'Failed to fetch' ? `無法連線 ${url} — CORS / 網路 / URL 錯誤` : raw}`)
+  }
 
   if (!res.ok) {
     const error = await parseJsonSafe(res)
+    console.error('[Gateway] /v1/responses error response', { status: res.status, error })
     throw new Error(error?.error?.message || error?.error || error?.detail || `OpenClaw response failed: ${res.status}`)
   }
 
   const data = await res.json()
+  console.log('[Gateway] /v1/responses OK', { id: data?.id, outputKeys: Object.keys(data ?? {}) })
   const text = extractOutputText(data)
-  if (!text) throw new Error('OpenClaw returned no assistant text')
-  return text
+  if (!text) {
+    console.warn('[Gateway] No assistant text extracted from response', data)
+    throw new Error('OpenClaw returned no assistant text')
+  }
+  return { text, responseId: data?.id }
 }

@@ -1,25 +1,36 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AvatarView } from '@/views/AvatarView'
 import { ChatView } from '@/views/ChatView'
 import { RecordView } from '@/views/RecordView'
 import { SettingsView } from '@/views/SettingsView'
 import type { AvatarState, ChatMessage, ViewMode } from '@/types'
-import { deleteVoice, fetchHealth, fetchVoices, openClawRespond, sttUpload, trainVoice, ttsRequest, uploadVoice, type HealthInfo, type VoiceInfo } from '@/lib/api'
+import { deleteVoice, fetchHealth, fetchVoices, openClawRespond, sttUpload, testGatewayConnection, trainVoice, ttsRequest, uploadVoice, type GatewayHealthResult, type HealthInfo, type VoiceInfo } from '@/lib/api'
 import { currentWindowKind, hideAndFocusChat, hideCurrentWindow, showWindow } from '@/lib/windows'
 import { publishSttResult, sendChatMessage, setSharedDraft, subscribeBridge } from '@/lib/bridge'
 import { useMediaRecorder } from '@/lib/useMediaRecorder'
+
+function usePersistedState<T extends string>(key: string, defaultValue: T): [T, (v: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    try { return (localStorage.getItem(key) as T) ?? defaultValue } catch { return defaultValue }
+  })
+  const set = useCallback((v: T) => {
+    setValue(v)
+    try { localStorage.setItem(key, v) } catch { /* ignore */ }
+  }, [key])
+  return [value, set]
+}
 
 export default function App() {
   const initialView = useMemo<ViewMode>(() => currentWindowKind(), [])
   const [view] = useState<ViewMode>(initialView)
   const [avatarState, setAvatarState] = useState<AvatarState>('idle')
-  const [serverUrl, setServerUrl] = useState('http://100.113.172.86:8080')
-  const [pythonUrl, setPythonUrl] = useState('http://100.113.172.86:8081')
-  const [gatewayUrl, setGatewayUrl] = useState('')
-  const [gatewayToken, setGatewayToken] = useState('')
-  const [gatewayAgentId, setGatewayAgentId] = useState('main')
-  const [gatewayUser, setGatewayUser] = useState('virtual-avatar-desktop')
-  const [voice, setVoice] = useState('vivian')
+  const [serverUrl, setServerUrl] = usePersistedState('oc:serverUrl', 'http://100.113.172.86:8080')
+  const [pythonUrl, setPythonUrl] = usePersistedState('oc:pythonUrl', 'http://100.113.172.86:8081')
+  const [gatewayUrl, setGatewayUrl] = usePersistedState('oc:gatewayUrl', '')
+  const [gatewayToken, setGatewayToken] = usePersistedState('oc:gatewayToken', '')
+  const [gatewayAgentId, setGatewayAgentId] = usePersistedState('oc:gatewayAgentId', 'main')
+  const [gatewayUser, setGatewayUser] = usePersistedState('oc:gatewayUser', 'virtual-avatar-desktop')
+  const [voice, setVoice] = usePersistedState('oc:voice', 'vivian')
   const [ttsText, setTtsText] = useState('您好，我是薇薇安。這裡之後會是桌面角色的設定中心。')
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -32,6 +43,13 @@ export default function App() {
   const [voicesLoading, setVoicesLoading] = useState(false)
   const [voicesError, setVoicesError] = useState<string | null>(null)
   const [voiceActionBusy, setVoiceActionBusy] = useState(false)
+  const [gatewayHealth, setGatewayHealth] = useState<GatewayHealthResult | null>(null)
+  const [gatewayTesting, setGatewayTesting] = useState(false)
+  const [ttsTestStatus, setTtsTestStatus] = useState<'idle' | 'generating' | 'ready' | 'playing' | 'error'>('idle')
+  const [ttsTestError, setTtsTestError] = useState<string | null>(null)
+  const [ttsTestAudioUrl, setTtsTestAudioUrl] = useState<string | null>(null)
+  const ttsTestAudioRef = useRef<HTMLAudioElement | null>(null)
+  const previousResponseId = useRef<string | undefined>(undefined)
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'assistant', text: '早安。接下來會改成真正的多視窗桌面角色。' },
     { role: 'assistant', text: '這裡會保留簡單對話，不塞太多工程控制。' },
@@ -146,6 +164,63 @@ export default function App() {
     return () => clearInterval(timer)
   }, [view, nodeHealth, pythonHealth, voices.length])
 
+  async function handleTestGateway() {
+    setGatewayTesting(true)
+    setGatewayHealth(null)
+    try {
+      const result = await testGatewayConnection({ gatewayUrl, token: gatewayToken, agentId: gatewayAgentId, user: gatewayUser })
+      setGatewayHealth(result)
+    } finally {
+      setGatewayTesting(false)
+    }
+  }
+
+  async function handleTestSpeech() {
+    if (!ttsText.trim() || ttsTestStatus === 'generating') return
+    // Clean up previous test audio
+    if (ttsTestAudioUrl) URL.revokeObjectURL(ttsTestAudioUrl)
+    setTtsTestAudioUrl(null)
+    setTtsTestError(null)
+    setTtsTestStatus('generating')
+    try {
+      const blob = await ttsRequest(serverUrl, { input: ttsText, voice, lang: 'zh' })
+      const url = URL.createObjectURL(blob)
+      setTtsTestAudioUrl(url)
+      setTtsTestStatus('ready')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error('[TTS Test]', message)
+      setTtsTestError(message)
+      setTtsTestStatus('error')
+    }
+  }
+
+  function handlePlayTestAudio() {
+    if (!ttsTestAudioUrl) return
+    if (!ttsTestAudioRef.current) {
+      ttsTestAudioRef.current = new Audio()
+      ttsTestAudioRef.current.addEventListener('ended', () => setTtsTestStatus('ready'))
+      ttsTestAudioRef.current.addEventListener('error', () => {
+        setTtsTestStatus('error')
+        setTtsTestError('Audio playback failed')
+      })
+    }
+    ttsTestAudioRef.current.src = ttsTestAudioUrl
+    setTtsTestStatus('playing')
+    ttsTestAudioRef.current.play().catch(() => {
+      setTtsTestStatus('error')
+      setTtsTestError('Audio playback failed')
+    })
+  }
+
+  function handleStopTestAudio() {
+    if (ttsTestAudioRef.current) {
+      ttsTestAudioRef.current.pause()
+      ttsTestAudioRef.current.currentTime = 0
+    }
+    setTtsTestStatus('ready')
+  }
+
   async function playBlob(blob: Blob) {
     if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl)
     const url = URL.createObjectURL(blob)
@@ -171,17 +246,18 @@ export default function App() {
     setAvatarState('thinking')
 
     try {
-      const assistantText = gatewayUrl.trim()
-        ? await openClawRespond(
-            {
-              gatewayUrl,
-              token: gatewayToken,
-              agentId: gatewayAgentId,
-              user: gatewayUser,
-            },
-            text,
-          )
-        : text
+      let assistantText: string
+      if (gatewayUrl.trim()) {
+        const resp = await openClawRespond(
+          { gatewayUrl, token: gatewayToken, agentId: gatewayAgentId, user: gatewayUser },
+          text,
+          previousResponseId.current,
+        )
+        assistantText = resp.text
+        previousResponseId.current = resp.responseId
+      } else {
+        assistantText = text
+      }
 
       appendMessage({ role: 'assistant', text: assistantText })
       await synthesizeAssistant(assistantText)
@@ -368,7 +444,14 @@ export default function App() {
       onTranscriptChange={updateDraft}
       canGenerateSpeech={canGenerateSpeech}
       voiceActionBusy={voiceActionBusy}
-      onGenerateSpeech={() => void handleSend(ttsText)}
+      onGenerateSpeech={() => void handleTestSpeech()}
+      ttsTestStatus={ttsTestStatus}
+      ttsTestError={ttsTestError}
+      onPlayTestAudio={handlePlayTestAudio}
+      onStopTestAudio={handleStopTestAudio}
+      gatewayHealth={gatewayHealth}
+      gatewayTesting={gatewayTesting}
+      onTestGateway={() => void handleTestGateway()}
     />
   )
 }

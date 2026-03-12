@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { AudioLines, Bot, Cable, Check, Mic, Plus, RefreshCw, Settings2, Sparkles, Trash2, Upload, Waves } from 'lucide-react'
+import { AudioLines, Bot, Cable, Check, Loader2, Mic, Play, Plus, RefreshCw, Settings2, Sparkles, Square, Trash2, Upload, Waves } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Progress } from '@/components/ui/progress'
 import type { AvatarState } from '@/types'
-import type { HealthInfo, VoiceInfo } from '@/lib/api'
+import type { GatewayHealthResult, HealthInfo, VoiceInfo } from '@/lib/api'
 
 function StatusDot({ ok }: { ok: boolean }) {
   return <span className={`inline-block size-2.5 rounded-full ${ok ? 'bg-green-400' : 'bg-yellow-400'}`} />
@@ -238,6 +238,13 @@ export function SettingsView({
   canGenerateSpeech,
   voiceActionBusy,
   onGenerateSpeech,
+  ttsTestStatus,
+  ttsTestError,
+  onPlayTestAudio,
+  onStopTestAudio,
+  gatewayHealth,
+  gatewayTesting,
+  onTestGateway,
 }: {
   serverUrl: string
   pythonUrl: string
@@ -273,6 +280,13 @@ export function SettingsView({
   canGenerateSpeech: boolean
   voiceActionBusy: boolean
   onGenerateSpeech: () => void
+  ttsTestStatus: 'idle' | 'generating' | 'ready' | 'playing' | 'error'
+  ttsTestError: string | null
+  onPlayTestAudio: () => void
+  onStopTestAudio: () => void
+  gatewayHealth: GatewayHealthResult | null
+  gatewayTesting: boolean
+  onTestGateway: () => void
 }) {
   const roadmap = [
     '把現在的大頁面正式定位成設定 / 控制中心',
@@ -398,9 +412,26 @@ export function SettingsView({
                   <Label htmlFor="ttsText">TTS test text</Label>
                   <Textarea id="ttsText" value={text} onChange={(e) => onTextChange(e.target.value)} />
                 </div>
-                <div className="flex flex-wrap gap-3">
-                  <Button onClick={onGenerateSpeech} disabled={!canGenerateSpeech}><Sparkles className="size-4" /> Generate speech</Button>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button onClick={onGenerateSpeech} disabled={!canGenerateSpeech || ttsTestStatus === 'generating'}>
+                    {ttsTestStatus === 'generating'
+                      ? <><Loader2 className="size-4 animate-spin" /> Generating...</>
+                      : <><Sparkles className="size-4" /> Generate speech</>}
+                  </Button>
+                  {ttsTestStatus === 'ready' && (
+                    <Button variant="outline" onClick={onPlayTestAudio}>
+                      <Play className="size-4" /> Play
+                    </Button>
+                  )}
+                  {ttsTestStatus === 'playing' && (
+                    <Button variant="outline" onClick={onStopTestAudio}>
+                      <Square className="size-4" /> Stop
+                    </Button>
+                  )}
                 </div>
+                {ttsTestStatus === 'error' && ttsTestError && (
+                  <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{ttsTestError}</div>
+                )}
                 {!speakerReady && voice ? <div className="text-xs text-yellow-300">Generate speech 需要先完成 speaker training。</div> : null}
               </CardContent>
             </Card>
@@ -447,6 +478,18 @@ export function SettingsView({
               <div className="space-y-2 md:col-span-2">
                 <Label htmlFor="gatewayUser">Session user key</Label>
                 <Input id="gatewayUser" value={gatewayUser} onChange={(e) => onGatewayUserChange(e.target.value)} placeholder="virtual-avatar-desktop" />
+              </div>
+              <div className="flex items-center gap-3 md:col-span-2">
+                <Button onClick={onTestGateway} disabled={gatewayTesting || !gatewayUrl.trim()} variant="outline">
+                  <Cable className="size-4" /> {gatewayTesting ? 'Testing...' : 'Test connection'}
+                </Button>
+                {gatewayHealth && (
+                  <span className={`text-sm ${gatewayHealth.ok ? 'text-green-400' : 'text-red-400'}`}>
+                    {gatewayHealth.ok
+                      ? `Connected${gatewayHealth.data?.version ? ` (v${gatewayHealth.data.version})` : ''}`
+                      : `Failed: ${gatewayHealth.message}`}
+                  </span>
+                )}
               </div>
             </CardContent>
           </Card>
